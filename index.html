@@ -1,0 +1,1959 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Blade Rush Prototype</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 深度强化：彻底禁用浏览器默认手势与回弹 */
+        html, body { 
+            margin: 0; padding: 0; background-color: #111; display: flex; justify-content: center; align-items: center; 
+            height: 100vh; height: 100dvh; 
+            overscroll-behavior: none; /* 禁用边缘回弹效果 */
+            touch-action: none; /* 彻底禁用浏览器的默认触摸行为(如滑动返回/缩放) */
+            overflow: hidden; user-select: none; -webkit-user-select: none; 
+        }
+        #game-container { 
+            position: relative; width: 100%; max-width: 400px; height: 100%; max-height: 100dvh; 
+            background-color: #1a1a1a; box-shadow: 0 0 20px rgba(0,0,0,0.5); overflow: hidden; 
+            touch-action: none;
+        }
+        canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+        .ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; }
+        .interactive-ui { pointer-events: auto; }
+        ::-webkit-scrollbar { display: none; }
+        
+        /* 自定义拨动开关样式 */
+        .toggle-checkbox:checked { right: 0; border-color: #00f3ff; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #00f3ff; }
+        .toggle-checkbox { right: 4px; z-index: 1; border-color: #e2e8f0; transition: all 0.3s; }
+        .toggle-label { width: 3rem; height: 1.5rem; background-color: #475569; border-radius: 9999px; transition: all 0.3s; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+    
+    <!-- 教程 UI 层 (重构为轻量化 Toast 和跳过按钮) -->
+    <div id="tutorial-layer" class="ui-layer hidden flex-col justify-between z-30 transition-opacity duration-300 opacity-0 pointer-events-none">
+        
+        <!-- 右上角跳过按钮 -->
+        <div class="w-full flex justify-end p-4 pointer-events-auto">
+            <button id="btn-skip-tut" class="px-3 py-1 bg-black/50 border border-slate-500 rounded text-xs text-slate-300 hover:text-white transition active:scale-95">跳过教程 >></button>
+        </div>
+
+        <!-- 底部轻量化提示条 (Toast) -->
+        <div class="w-full px-6 mb-24 pointer-events-none flex flex-col items-center">
+            <!-- 动态指引图标 (放在文字上方) -->
+            <div id="tut-icon-swipe" class="hidden flex-col items-center animate-[pulse_1s_ease-in-out_infinite] mb-2 drop-shadow-[0_0_10px_#00f3ff]">
+                <svg class="w-10 h-10 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122"></path></svg>
+                <div class="w-1 h-12 bg-gradient-to-b from-cyan-400 to-transparent mt-1 rounded-full transform -rotate-12"></div>
+            </div>
+            
+            <div class="bg-slate-900/90 border-t-2 border-cyan-500 rounded-lg p-3 shadow-[0_0_20px_rgba(0,0,0,0.8)] backdrop-blur-sm w-full text-center max-w-[280px]">
+                <h2 id="tut-title" class="text-sm font-black text-yellow-400 tracking-widest uppercase mb-1">提示标题</h2>
+                <p id="tut-desc" class="text-white text-xs font-bold leading-relaxed">提示内容详情</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- UI信息层 -->
+    <div class="ui-layer">
+        <div class="absolute top-4 left-0 w-full flex justify-between px-6 pointer-events-none z-10 items-center">
+            <div class="pointer-events-auto">
+                <button id="btn-pause" class="w-10 h-10 bg-slate-800/80 rounded-full border border-cyan-500/50 text-white flex items-center justify-center hover:bg-cyan-600 transition active:scale-95 shadow-[0_0_10px_rgba(0,243,255,0.3)] relative">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                </button>
+            </div>
+            <div class="flex space-x-4">
+                <div class="text-yellow-400 font-black text-xl drop-shadow-md shadow-black">Lv.<span id="ui-level">1</span></div>
+                <div class="text-white font-black text-xl drop-shadow-md shadow-black"><span id="ui-score">0</span></div>
+            </div>
+        </div>
+        
+        <div class="absolute left-3 top-1/2 -translate-y-1/2 h-1/2 w-2.5 bg-gray-800 rounded-full overflow-hidden border border-gray-600 shadow-[0_0_10px_rgba(0,0,0,0.8)] pointer-events-none">
+            <div id="ui-hp-bar" class="absolute bottom-0 w-full bg-red-500 rounded-full transition-all duration-200" style="height: 100%;"></div>
+        </div>
+        
+        <div class="absolute right-3 top-1/2 -translate-y-1/2 h-1/2 w-2.5 bg-gray-800 rounded-full overflow-hidden border border-gray-600 shadow-[0_0_10px_rgba(0,0,0,0.8)] pointer-events-none">
+            <div id="ui-exp-bar" class="absolute bottom-0 w-full bg-cyan-400 rounded-full transition-all duration-200" style="height: 0%;"></div>
+        </div>
+
+        <div id="ui-ult-btn" class="absolute right-6 bottom-8 w-16 h-16 rounded-full bg-gray-900 border-2 border-gray-700 flex justify-center items-center pointer-events-auto cursor-not-allowed opacity-50 transition-all duration-300 z-20">
+            <svg class="absolute top-0 left-0 w-full h-full transform -rotate-90" viewBox="0 0 64 64">
+                <circle cx="32" cy="32" r="28" stroke="#374151" stroke-width="4" fill="transparent"></circle>
+                <circle id="ui-ult-ring" cx="32" cy="32" r="28" stroke="#00f3ff" stroke-width="4" fill="transparent" stroke-dasharray="175.9" stroke-dashoffset="175.9" class="transition-all duration-300"></circle>
+            </svg>
+            <span class="text-white font-black text-xl z-10 select-none">极</span>
+        </div>
+    </div>
+
+    <!-- 开始界面 -->
+    <div id="start-screen" class="ui-layer interactive-ui bg-black/80 flex flex-col justify-center items-center backdrop-blur-sm z-50">
+        <h1 class="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-red-500 to-yellow-500 mb-2 italic">Blade Rush</h1>
+        <p class="text-gray-300 mb-8 text-sm tracking-widest">单指划屏 · 连携进化 V2</p>
+        
+        <div class="text-gray-400 text-sm mb-6 space-y-2 text-center">
+            <p><span class="text-cyan-400">✍️ 自由轨迹</span>：剑气完全跟随划线形状与范围</p>
+            <p><span class="text-yellow-400">🔥 流派构筑</span>：狂战、幻影、元素，多阶觉醒</p>
+            <p><span class="text-purple-400">🌀 时空断裂</span>：杀敌充能，点击右下角释放全屏秒杀</p>
+            <p class="mt-4 text-cyan-500 font-bold text-xs">【高维警戒】每提升 3 级，将遭遇发射弹幕的强力 Boss！</p>
+        </div>
+
+        <button id="btn-start" class="px-8 py-3 bg-pink-600 hover:bg-pink-500 text-white font-bold rounded-full shadow-[0_0_15px_rgba(236,72,153,0.7)] transform transition hover:scale-105 active:scale-95 text-lg">
+            接入系统 (LINK START)
+        </button>
+    </div>
+
+    <!-- 升级界面 -->
+    <div id="level-up-screen" class="ui-layer interactive-ui bg-black/80 hidden flex-col justify-center items-center backdrop-blur-md z-40 p-4">
+        <h2 class="text-3xl font-black text-yellow-400 mb-6 drop-shadow-md animate-pulse">系统演化！</h2>
+        <div id="upgrade-container" class="w-full space-y-4"></div>
+        <div class="mt-6">
+            <button id="btn-reroll" class="px-6 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-400 border border-slate-600 rounded-full font-bold transition shadow-[0_0_10px_rgba(0,243,255,0.2)]">🎲 刷新选项 (1/1)</button>
+        </div>
+    </div>
+
+    <!-- 暂停界面 -->
+    <div id="pause-screen" class="ui-layer interactive-ui bg-slate-300/80 hidden flex-col justify-center items-center backdrop-blur-sm z-50">
+        <!-- 主暂停面板 -->
+        <div id="pause-content" class="flex flex-col items-center w-full">
+            <h2 class="text-4xl font-black text-slate-900 mb-8 tracking-widest drop-shadow-md">系统暂停</h2>
+            <div class="mb-6 w-64 bg-white/60 p-4 rounded-xl shadow-sm border border-slate-400/30">
+                <h3 class="text-sm font-bold text-slate-700 mb-2 border-b border-slate-400/30 pb-1 flex items-center justify-between">
+                    <span>⚙️ 当前构筑 (Build)</span>
+                </h3>
+                <div id="pause-build-list" class="text-xs text-slate-800 space-y-1 max-h-32 overflow-y-auto overscroll-contain pr-1"></div>
+            </div>
+
+            <div id="pause-buttons" class="flex flex-col space-y-3 w-56">
+                <button id="btn-resume" class="py-3 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-full shadow-lg transform transition hover:scale-105 active:scale-95">继续游戏</button>
+                <button id="btn-settings-open" class="py-2 mt-2 bg-slate-700 hover:bg-slate-600 text-yellow-300 font-bold rounded-full shadow-lg transform transition hover:scale-105 active:scale-95 border border-yellow-500/30 flex items-center justify-center gap-2"><span>⚙️</span> 系统设置</button>
+                <button id="btn-quit" class="py-3 bg-red-600 hover:bg-red-500 text-white font-bold rounded-full shadow-lg transform transition hover:scale-105 active:scale-95">结束游戏</button>
+            </div>
+        </div>
+
+        <!-- 统一设置面板 -->
+        <div id="settings-panel" class="hidden flex-col items-center bg-slate-900/95 p-6 rounded-xl border border-yellow-500/50 shadow-[0_0_20px_rgba(250,204,21,0.3)] w-80 max-h-[80vh] overflow-y-auto overscroll-contain z-50">
+            <h3 class="text-xl font-black text-yellow-400 mb-4 border-b border-yellow-500/30 pb-2 w-full text-center tracking-widest">系统设置</h3>
+            
+            <div class="w-full bg-slate-800 p-3 rounded-lg border border-slate-600 mb-4 space-y-4">
+                <label class="flex justify-between items-center w-full cursor-pointer">
+                    <span class="text-white text-sm font-bold">🎵 音乐 (BGM)</span>
+                    <div class="relative inline-block w-12 align-middle select-none transition duration-200 ease-in">
+                        <input type="checkbox" id="setting-bgm" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"/>
+                        <div class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer"></div>
+                    </div>
+                </label>
+                <label class="flex justify-between items-center w-full cursor-pointer">
+                    <span class="text-white text-sm font-bold">🔊 音效 (SFX)</span>
+                    <div class="relative inline-block w-12 align-middle select-none transition duration-200 ease-in">
+                        <input type="checkbox" id="setting-sfx" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"/>
+                        <div class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer"></div>
+                    </div>
+                </label>
+                <div class="flex justify-between items-center w-full">
+                    <div class="flex items-center gap-2">
+                        <label for="setting-vibrate" class="text-white text-sm font-bold cursor-pointer">📳 手机震动</label>
+                        <button id="btn-test-vibrate" class="bg-yellow-500/20 hover:bg-yellow-500/40 text-yellow-300 border border-yellow-500/50 text-xs px-2 py-0.5 rounded transition active:scale-95">测试</button>
+                    </div>
+                    <div class="relative inline-block w-12 align-middle select-none transition duration-200 ease-in">
+                        <input type="checkbox" id="setting-vibrate" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"/>
+                        <label for="setting-vibrate" class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer"></label>
+                    </div>
+                </div>
+                <label class="flex justify-between items-center w-full cursor-pointer">
+                    <span class="text-white text-sm font-bold">✨ 伤害特效文字</span>
+                    <div class="relative inline-block w-12 align-middle select-none transition duration-200 ease-in">
+                        <input type="checkbox" id="setting-fxtext" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"/>
+                        <div class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer"></div>
+                    </div>
+                </label>
+                <div class="flex justify-between items-center w-full border-t border-slate-700 pt-3">
+                    <span class="text-white text-sm font-bold">🎓 重置新手教程</span>
+                    <button id="btn-reset-tutorial" class="bg-cyan-600 hover:bg-cyan-500 text-white text-xs px-3 py-1 rounded transition active:scale-95">重置</button>
+                </div>
+            </div>
+
+            <div class="w-full space-y-2 mb-4">
+                <button id="btn-howto-open" class="w-full py-2 bg-slate-800 hover:bg-slate-700 text-green-300 font-bold rounded-lg border border-slate-600 flex justify-between px-4 items-center">
+                    <span>📖 玩法指南与说明</span> <span>></span>
+                </button>
+                <button id="btn-debug-open" class="w-full py-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 font-bold rounded-lg border border-slate-600 flex justify-between px-4 items-center">
+                    <span>🛠️ 开发者作弊面板</span> <span>></span>
+                </button>
+            </div>
+
+            <button id="btn-settings-close" class="mt-2 py-3 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-full transition w-full border border-slate-500 active:scale-95">返回</button>
+        </div>
+
+        <!-- 玩法说明面板 -->
+        <div id="howto-panel" class="hidden flex-col items-center bg-slate-900/95 p-6 rounded-xl border border-green-500/50 shadow-[0_0_20px_rgba(0,255,100,0.3)] w-80 max-h-[80vh] overflow-y-auto overscroll-contain z-50 text-white text-sm text-left">
+            <h3 class="text-xl font-black text-green-400 mb-4 border-b border-green-500/30 pb-2 w-full text-center tracking-widest">系统指南 (GUIDE)</h3>
+            <div class="space-y-4 w-full">
+                <p><span class="text-cyan-400 font-bold text-base">【基础操作】</span><br>在屏幕上划动手指生成剑气轨迹，<span class="text-yellow-300">松开手指</span>即可触发斩击。</p>
+                <p><span class="text-red-400 font-bold text-base">【战斗节奏】</span><br>角色底部的光环代表攻击冷却(CD)；连杀怪物会有极高的分数倍率加成。</p>
+                <p><span class="text-purple-400 font-bold text-base">【流派构筑 V2】</span><br>集齐基础技能可解锁强大的双技能融合效果与最终觉醒：<br>
+                <span class="text-orange-400">- 狂战流：</span>偏向单发爆发、蓄力、击退与回血<br>
+                <span class="text-teal-300">- 幻影流：</span>滞留风墙与满屏多重剑气，克制弹幕<br>
+                <span class="text-blue-300">- 元素使：</span>冰火雷异常状态的终极反应引爆
+                </p>
+                <p><span class="text-yellow-400 font-bold text-base">【高维 Boss】</span><br>每3级遭遇。Boss发射的危险弹幕，可以直接通过<span class="text-white font-bold bg-red-600 px-1 rounded ml-1">划线斩击切碎</span>来进行防御与弹反！</p>
+            </div>
+            <button id="btn-howto-close" class="mt-6 py-3 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-full transition w-full border border-slate-500 active:scale-95">返回</button>
+        </div>
+
+        <!-- 开发者作弊面板 -->
+        <div id="debug-panel" class="hidden flex-col items-center bg-slate-900/95 p-6 rounded-xl border border-cyan-500/50 shadow-[0_0_20px_rgba(0,243,255,0.3)] w-80 max-h-[80vh] overflow-y-auto overscroll-contain z-50">
+            <h3 class="text-xl font-black text-cyan-400 mb-4 border-b border-cyan-500/30 pb-2 w-full text-center tracking-widest">系统覆写 (DEBUG)</h3>
+            <div class="flex justify-between items-center w-full mb-4 bg-slate-800 p-3 rounded border border-slate-600">
+                <span class="text-white text-sm font-bold">🛡️ 无敌模式 (God Mode)</span>
+                <input type="checkbox" id="debug-godmode" class="w-5 h-5 accent-cyan-500 cursor-pointer">
+            </div>
+            <div class="flex justify-between items-center w-full mb-4 bg-slate-800 p-3 rounded border border-slate-600">
+                <span class="text-white text-sm font-bold">⬆️ 角色等级</span>
+                <div class="flex space-x-3 items-center">
+                    <button id="debug-lvl-down" class="w-6 h-6 bg-red-600 rounded text-white font-bold hover:bg-red-500 flex items-center justify-center">-</button>
+                    <span id="debug-lvl-display" class="text-white font-mono w-6 text-center">1</span>
+                    <button id="debug-lvl-up" class="w-6 h-6 bg-green-600 rounded text-white font-bold hover:bg-green-500 flex items-center justify-center">+</button>
+                </div>
+            </div>
+            <div class="w-full mb-4 bg-slate-800 p-3 rounded flex flex-col border border-slate-600">
+                <div class="flex justify-between text-white text-sm font-bold mb-2">
+                    <span>⏱️ 刷怪间隔 (秒)</span>
+                    <span id="debug-spawn-display" class="text-cyan-400">1.0s</span>
+                </div>
+                <input type="range" id="debug-spawn-rate" min="0.1" max="3.0" step="0.1" value="1.0" class="w-full accent-cyan-500 cursor-pointer">
+            </div>
+            <div class="w-full bg-slate-800 p-3 rounded flex flex-col mb-4 border border-slate-600">
+                <span class="text-white text-sm font-bold mb-3 border-b border-slate-600 pb-1">🎁 强制分配升级模块</span>
+                <div id="debug-upgrades-list" class="flex flex-col space-y-2"></div>
+            </div>
+            <button id="btn-debug-close" class="mt-2 py-3 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-full transition w-full border border-slate-500 active:scale-95">关闭覆写面板</button>
+        </div>
+
+        <div id="countdown-text" class="text-8xl font-black text-cyan-700 drop-shadow-lg animate-pulse hidden absolute"></div>
+
+        <div class="absolute bottom-4 left-4 text-slate-600 font-mono text-sm font-bold tracking-wider">
+            v2.48
+        </div>
+    </div>
+
+    <!-- 游戏结束界面 -->
+    <div id="game-over-screen" class="ui-layer interactive-ui bg-red-900/90 hidden flex-col justify-center items-center backdrop-blur-sm z-50 p-6 overflow-y-auto overscroll-contain">
+        <h2 class="text-5xl font-black text-white mb-2">YOU DIED</h2>
+        <p class="text-red-200 mb-4">最终存活积分: <span id="final-score" class="font-bold text-white text-2xl">0</span></p>
+        
+        <div class="w-full max-w-xs bg-black/60 rounded-xl p-4 mb-6 border border-red-500/30 shadow-lg">
+            <div id="submit-score-container" class="flex flex-col mb-4 pb-4 border-b border-white/10">
+                <p class="text-xs text-gray-300 mb-2">记录你的赛博传奇：</p>
+                <div class="flex gap-2">
+                    <input type="text" id="player-name" maxlength="10" placeholder="输入代号" class="flex-1 bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600 focus:outline-none focus:border-cyan-400">
+                    <button id="btn-submit-score" class="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold rounded transition">登入</button>
+                </div>
+            </div>
+            <h3 class="text-cyan-400 font-bold mb-2 flex items-center justify-center gap-2 text-sm">🏆 顶尖武士排行</h3>
+            <div id="leaderboard-list" class="flex flex-col max-h-32 overflow-y-auto overscroll-contain pr-2 space-y-1"></div>
+        </div>
+        <button id="btn-restart" class="px-8 py-3 bg-white text-red-900 hover:bg-gray-200 font-bold rounded-full shadow-lg transform transition hover:scale-105 active:scale-95">重新连接</button>
+    </div>
+</div>
+
+<script>
+// ==========================================
+// 1. 基础设置与引擎初始化
+// ==========================================
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const container = document.getElementById('game-container');
+
+let width = container.clientWidth;
+let height = container.clientHeight;
+canvas.width = width;
+canvas.height = height;
+
+window.addEventListener('resize', () => {
+    width = container.clientWidth;
+    height = container.clientHeight;
+    canvas.width = width;
+    canvas.height = height;
+});
+
+// 全局设置状态
+const Config = {
+    bgmEnabled: true,
+    sfxEnabled: true,
+    vibrateEnabled: true,
+    fxTextEnabled: true
+};
+
+function triggerVibrate(pattern) {
+    if (Config.vibrateEnabled && typeof window.navigator.vibrate === 'function') {
+        try { window.navigator.vibrate(pattern); } catch(e) { }
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const btnTestVibrate = document.getElementById('btn-test-vibrate');
+    if (btnTestVibrate) {
+        btnTestVibrate.addEventListener('click', () => {
+            if (typeof window.navigator.vibrate === 'function') {
+                try {
+                    let success = window.navigator.vibrate([100, 50, 100]);
+                    if (success) {
+                        const btn = document.getElementById('btn-test-vibrate');
+                        btn.innerText = '已震动!'; setTimeout(() => { btn.innerText = '测试'; }, 1000);
+                    } else {
+                        alert("震动请求被 Chrome 浏览器拦截！❌\n\n请将代码部署为独立站点，或直接在浏览器地址栏访问顶层原始 URL。");
+                    }
+                } catch(e) { alert("震动引发异常，可能是系统级限制或省电模式已开启。"); }
+            } else { alert("当前浏览器或 iOS 系统不支持 Web 震动 API。"); }
+        });
+    }
+});
+
+// ==========================================
+// 全局防滚动与手势拦截
+// ==========================================
+window.addEventListener('touchmove', function(e) {
+    if (e.target.closest('.overflow-y-auto') || e.target.closest('input[type="range"]')) {
+        return; 
+    }
+    e.preventDefault();
+}, { passive: false }); 
+
+// ==========================================
+// 教程系统 (Tutorial System V2 - 聚焦挖孔)
+// ==========================================
+const Tutorial = {
+    key: 'bladeRush_tutorial_v1',
+    progress: {
+        basic: false, cd: false, upgrade: false, deflect: false, spike: false, ultimate: false
+    },
+    activeType: null,
+    spotlightTarget: null, 
+    autoResolveTimer: null, 
+    
+    init() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(this.key));
+            if (saved) this.progress = { ...this.progress, ...saved };
+        } catch(e) {}
+    },
+    save() { localStorage.setItem(this.key, JSON.stringify(this.progress)); },
+    reset() {
+        this.progress = { basic: false, cd: false, upgrade: false, deflect: false, spike: false, ultimate: false };
+        this.save(); alert("系统教程记录已重置。");
+    },
+    
+    trigger(type, title, desc, showSwipeIcon = false, spotlightFn = null) {
+        if (this.progress[type] || this.activeType) return; 
+        
+        this.activeType = type;
+        Game.timeScale = 0.05; 
+        
+        const layer = document.getElementById('tutorial-layer');
+        document.getElementById('tut-title').innerText = title;
+        document.getElementById('tut-desc').innerText = desc;
+        
+        const icon = document.getElementById('tut-icon-swipe');
+        if (showSwipeIcon) icon.classList.remove('hidden');
+        else icon.classList.add('hidden');
+        
+        layer.classList.remove('hidden');
+        void layer.offsetWidth;
+        layer.classList.remove('opacity-0');
+        layer.classList.add('opacity-100');
+
+        if (spotlightFn) {
+            this.spotlightTarget = spotlightFn;
+        }
+
+        if (this.autoResolveTimer) clearTimeout(this.autoResolveTimer);
+        this.autoResolveTimer = setTimeout(() => {
+            if (this.activeType === type) this.resolve(type);
+        }, 6000);
+    },
+
+    resolve(type) {
+        if (this.activeType !== type) return;
+        
+        if (this.autoResolveTimer) clearTimeout(this.autoResolveTimer);
+        this.progress[type] = true;
+        this.save();
+        this.activeType = null;
+        this.spotlightTarget = null;
+        
+        Game.timeScale = 1.0; 
+        
+        const layer = document.getElementById('tutorial-layer');
+        layer.classList.remove('opacity-100');
+        layer.classList.add('opacity-0');
+        setTimeout(() => { if (!this.activeType) layer.classList.add('hidden'); }, 300);
+    },
+
+    resolveAuto(type, delayMs = 2500) {
+        if (this.activeType !== type) return;
+        if (this.autoResolveTimer) clearTimeout(this.autoResolveTimer);
+        this.autoResolveTimer = setTimeout(() => { this.resolve(type); }, delayMs);
+    }
+};
+Tutorial.init();
+
+document.addEventListener('DOMContentLoaded', () => {
+    const btnResetTutorial = document.getElementById('btn-reset-tutorial');
+    if (btnResetTutorial) btnResetTutorial.addEventListener('click', () => { Tutorial.reset(); });
+
+    const btnSkipTut = document.getElementById('btn-skip-tut');
+    if (btnSkipTut) {
+        btnSkipTut.addEventListener('click', () => {
+            if (Tutorial.activeType) Tutorial.resolve(Tutorial.activeType);
+        });
+    }
+});
+
+
+// ==========================================
+// 2. 音频系统
+// ==========================================
+const AudioSys = {
+    ctx: null, bgmActive: false, nextNoteTime: 0, currentNote: 0, tempo: 130,
+    init() { if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)(); if (this.ctx.state === 'suspended') this.ctx.resume(); },
+    m2f(note) { return 440 * Math.pow(2, (note - 69) / 12); },
+    startBGM() { if (!this.ctx) this.init(); if (this.bgmActive) return; this.bgmActive = true; this.nextNoteTime = this.ctx.currentTime + 0.1; this.currentNote = 0; },
+    stopBGM() { this.bgmActive = false; },
+    scheduleNote(noteIndex, time) {
+        if (!this.ctx || !Config.bgmEnabled) return; 
+        const step = noteIndex % 256; 
+        
+        const bassNotes = [
+            36,48,36,48, 36,48,36,48, 36,48,36,48, 36,48,36,48, 32,44,32,44, 32,44,32,44, 32,44,32,44, 32,44,32,44, 
+            39,51,39,51, 39,51,39,51, 39,51,39,51, 39,51,39,51, 34,46,34,46, 34,46,34,46, 34,46,34,46, 34,46,34,46, 
+            36,48,36,48, 36,48,36,48, 36,48,36,48, 36,48,36,48, 32,44,32,44, 32,44,32,44, 32,44,32,44, 32,44,32,44, 
+            39,51,39,51, 39,51,39,51, 39,51,39,51, 39,51,39,51, 34,46,34,46, 34,46,34,46, 34,46,34,46, 34,46,34,46, 
+            41,53,41,53, 41,53,41,53, 41,53,41,53, 41,53,41,53, 32,44,32,44, 32,44,32,44, 32,44,32,44, 32,44,32,44, 
+            39,51,39,51, 39,51,39,51, 39,51,39,51, 39,51,39,51, 34,46,34,46, 34,46,34,46, 34,46,34,46, 34,46,34,46, 
+            36,48,36,48, 36,48,36,48, 36,48,36,48, 36,48,36,48, 32,44,32,44, 32,44,32,44, 32,44,32,44, 32,44,32,44, 
+            43,55,43,55, 43,55,43,55, 43,55,43,55, 43,55,43,55, 43,43,45,45, 47,47,48,48, 50,50,52,52, 53,53,55,55  
+        ];
+        const bassOsc = this.ctx.createOscillator(); const bassGain = this.ctx.createGain();
+        bassOsc.type = 'square'; bassOsc.frequency.value = this.m2f(bassNotes[step]);
+        bassGain.gain.setValueAtTime(0.08, time); bassGain.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+        bassOsc.connect(bassGain); bassGain.connect(this.ctx.destination);
+        bassOsc.start(time); bassOsc.stop(time + 0.15);
+
+        const arpNotes = [
+            60,63,67,63, 60,63,67,63, 60,63,67,72, 67,63,60,63, 56,60,63,60, 56,60,63,60, 56,60,63,68, 63,60,56,60, 
+            63,67,70,67, 63,67,70,67, 63,67,70,75, 70,67,63,67, 58,62,65,62, 58,62,65,62, 58,62,65,70, 65,62,58,62, 
+            72,75,79,75, 72,75,79,75, 72,75,79,84, 79,75,72,75, 68,72,75,72, 68,72,75,72, 68,72,75,80, 75,72,68,72, 
+            75,79,82,79, 75,79,82,79, 75,79,82,87, 82,79,75,79, 70,74,77,74, 70,74,77,74, 70,74,77,82, 77,74,70,74, 
+            65,68,72,68, 65,68,72,68, 65,68,72,77, 72,68,65,68, 68,72,75,72, 68,72,75,72, 68,72,75,80, 75,72,68,72, 
+            75,79,82,79, 75,79,82,79, 75,79,82,87, 82,79,75,79, 70,74,77,74, 70,74,77,74, 70,74,77,82, 77,74,70,74, 
+            60,63,67,63, 60,63,67,63, 60,63,67,72, 67,63,60,63, 68,63,60,63, 68,63,60,63, 68,63,60,68, 72,68,63,60, 
+            67,71,74,71, 67,71,74,71, 67,71,74,79, 74,71,67,71, 67,67,69,69, 71,71,72,72, 74,74,76,76, 78,78,79,79  
+        ];
+        const arpOsc = this.ctx.createOscillator(); const arpGain = this.ctx.createGain();
+        arpOsc.type = 'sawtooth'; arpOsc.frequency.value = this.m2f(arpNotes[step]);
+        arpGain.gain.setValueAtTime(0.03, time); arpGain.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
+        arpOsc.connect(arpGain); arpGain.connect(this.ctx.destination);
+        arpOsc.start(time); arpOsc.stop(time + 0.1);
+
+        let playKick = false;
+        if (step < 192) playKick = (step % 4 === 0);
+        else if (step >= 192 && step < 224) playKick = false; 
+        else if (step >= 224 && step < 240) playKick = (step % 4 === 0); 
+        else playKick = (step % 2 === 0); 
+        
+        if (playKick) {
+            const kick = this.ctx.createOscillator(); const kickGain = this.ctx.createGain();
+            kick.frequency.setValueAtTime(150, time); kick.frequency.exponentialRampToValueAtTime(0.01, time + 0.1);
+            kickGain.gain.setValueAtTime(0.15, time); kickGain.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
+            kick.connect(kickGain); kickGain.connect(this.ctx.destination);
+            kick.start(time); kick.stop(time + 0.1);
+        }
+
+        let playSnare = (step % 8 === 4);
+        if (step >= 248) playSnare = true; 
+        if (playSnare) { 
+            const snare = this.ctx.createOscillator(); const snareGain = this.ctx.createGain();
+            snare.type = 'square'; snare.frequency.setValueAtTime(800, time); snare.frequency.exponentialRampToValueAtTime(100, time + 0.1);
+            snareGain.gain.setValueAtTime(0.05, time); snareGain.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
+            snare.connect(snareGain); snareGain.connect(this.ctx.destination);
+            snare.start(time); snare.stop(time + 0.1);
+        } else {
+            let playHat = (step % 2 !== 0);
+            if (step >= 64 && step < 192 && step % 2 === 0 && !playKick) playHat = true; 
+            if (playHat) {
+                const hat = this.ctx.createOscillator(); const hatGain = this.ctx.createGain();
+                hat.type = 'square'; hat.frequency.setValueAtTime(4000, time);
+                hatGain.gain.setValueAtTime(0.015, time); hatGain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
+                hat.connect(hatGain); hatGain.connect(this.ctx.destination);
+                hat.start(time); hat.stop(time + 0.05);
+            }
+        }
+    },
+    updateBGM() {
+        if (!this.bgmActive || !this.ctx) return;
+        if (gameState !== 'PLAYING') { this.nextNoteTime = this.ctx.currentTime + 0.1; return; }
+        
+        const effectiveTempo = this.tempo * Game.timeScale; 
+        
+        while (this.nextNoteTime < this.ctx.currentTime + 0.1) {
+            this.scheduleNote(this.currentNote, this.nextNoteTime);
+            this.nextNoteTime += (60.0 / effectiveTempo) / 4; 
+            this.currentNote++;
+        }
+    },
+    playSlash() {
+        if (!this.ctx || !Config.sfxEnabled) return;
+        const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+        osc.type = 'sawtooth'; osc.frequency.setValueAtTime(800, this.ctx.currentTime); osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.3, this.ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+        osc.connect(gain); gain.connect(this.ctx.destination); osc.start(); osc.stop(this.ctx.currentTime + 0.1);
+    },
+    playHit() {
+        if (!this.ctx || !Config.sfxEnabled) return;
+        const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+        osc.type = 'square'; osc.frequency.setValueAtTime(150, this.ctx.currentTime); osc.frequency.exponentialRampToValueAtTime(40, this.ctx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.5, this.ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+        osc.connect(gain); gain.connect(this.ctx.destination); osc.start(); osc.stop(this.ctx.currentTime + 0.1);
+    },
+    playLevelUp() {
+        if (!this.ctx || !Config.sfxEnabled) return;
+        [400, 500, 600, 800].forEach((freq, i) => {
+            const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+            osc.type = 'sine'; osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0, this.ctx.currentTime + i*0.1); gain.gain.linearRampToValueAtTime(0.3, this.ctx.currentTime + i*0.1 + 0.05); gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + i*0.1 + 0.2);
+            osc.connect(gain); gain.connect(this.ctx.destination); osc.start(this.ctx.currentTime + i*0.1); osc.stop(this.ctx.currentTime + i*0.1 + 0.2);
+        });
+    },
+    playDamage() {
+        if (!this.ctx || !Config.sfxEnabled) return;
+        const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+        osc.type = 'sawtooth'; osc.frequency.setValueAtTime(150, this.ctx.currentTime); osc.frequency.exponentialRampToValueAtTime(10, this.ctx.currentTime + 0.3);
+        gain.gain.setValueAtTime(0.6, this.ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.3);
+        osc.connect(gain); gain.connect(this.ctx.destination); osc.start(); osc.stop(this.ctx.currentTime + 0.3);
+    },
+    playFireHit() {
+        if (!this.ctx || !Config.sfxEnabled) return;
+        const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+        osc.type = 'triangle'; osc.frequency.setValueAtTime(80, this.ctx.currentTime); osc.frequency.exponentialRampToValueAtTime(30, this.ctx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.15, this.ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+        osc.connect(gain); gain.connect(this.ctx.destination); osc.start(); osc.stop(this.ctx.currentTime + 0.1);
+    },
+    playLightning() {
+        if (!this.ctx || !Config.sfxEnabled) return;
+        const osc = this.ctx.createOscillator(); const gain = this.ctx.createGain();
+        osc.type = 'sawtooth'; osc.frequency.setValueAtTime(1200, this.ctx.currentTime); osc.frequency.exponentialRampToValueAtTime(100, this.ctx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.15, this.ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
+        osc.connect(gain); gain.connect(this.ctx.destination); osc.start(); osc.stop(this.ctx.currentTime + 0.1);
+    }
+};
+
+// ==========================================
+// 3. 状态管理与玩家属性
+// ==========================================
+let gameState = 'START'; 
+let lastTime = 0;
+let hitStopTime = 0;
+let screenShake = 0;
+
+const Game = {
+    score: 0, level: 1, exp: 0, expNeeded: 10,
+    timePassed: 0, timeSinceLastSlash: 0, 
+    spawnTimer: 0, spawnRate: 1.0, 
+    currentSlashKills: 0, comboDisplay: { count: 0, life: 0 },
+    enemies: [], slashes: [], particles: [],
+    expGems: [], floatingTexts: [], fireTrails: [],
+    projectiles: [], lightnings: [], explosions: [], 
+    
+    ultState: 0, ultTimer: 0, ultRadius: 0, ultVisualSlashes: [],
+    lastFireSoundTime: 0, lastLightningSoundTime: 0, 
+    bossActive: false, nextBossLevel: 3, cataclysmIndex: 1,
+
+    globalSpikeTimer: 2.0,
+    globalSpikeState: 'COOLDOWN',
+    
+    timeScale: 1.0 
+};
+
+const Player = {
+    x: width / 2, y: height - 100, radius: 15, maxHp: 100, hp: 100,
+    baseDamage: 25, critChance: 0.15, critMult: 2.0, slashSizeMult: 1.0, lifesteal: 0, multiSlash: 0, 
+    
+    fireTrail: false, iceEnchant: false, lightningEnchant: false,
+    hellfire: false, superconductor: false, plasmaGrid: false, shatterBurst: false, elementalCataclysm: false, 
+
+    heavyCharge: false, fatalExecution: false, bloodthirst: false, bloodthirstStacks: 0, bloodthirstTimer: 0,
+    isshin: false, bluntHeavy: false, skySplitter: false,
+
+    lightBlade: false, lingeringQi: false, unlimitedBlades: false, phantomDeflect: false,
+    echoSlash: false, bladeWall: false, thousandBlades: false,
+    
+    baseCooldown: 0.3, currentCooldown: 0, ultCharge: 0, maxUltCharge: 40, acquiredUpgrades: {}, godMode: false
+};
+
+// ==========================================
+// 全局技能定义机制 V2
+// ==========================================
+const hasUp = (name) => Player.acquiredUpgrades[name] > 0;
+const countBerserkerT1 = () => (hasUp('锋锐打磨')?1:0) + (hasUp('开阔视野')?1:0) + (hasUp('弱点洞察')?1:0) + (hasUp('重击蓄能')?1:0);
+const countPhantomT1 = () => (hasUp('疾风之势')?1:0) + (hasUp('幻影连斩')?1:0) + (hasUp('轻盈剑体')?1:0) + (hasUp('剑气留形')?1:0);
+const countBerserkerT2 = () => (Player.fatalExecution?1:0) + (Player.bloodthirst?1:0) + (Player.isshin?1:0) + (Player.bluntHeavy?1:0);
+const countPhantomT2 = () => (Player.unlimitedBlades?1:0) + (Player.phantomDeflect?1:0) + (Player.echoSlash?1:0) + (Player.bladeWall?1:0);
+
+const Upgrades = [
+    { id: 'dmg', name: '锋锐打磨', desc: '基础伤害提升 30%', apply: () => Player.baseDamage *= 1.3, req: () => true },
+    { id: 'size', name: '开阔视野', desc: '斩击厚度与范围增加 20%', apply: () => Player.slashSizeMult *= 1.2, req: () => true },
+    { id: 'crit', name: '弱点洞察', desc: '基础暴击率提升 15%', apply: () => Player.critChance += 0.15, req: () => true },
+    { id: 'heavy', name: '重击蓄能', desc: '不出刀时积攒力量，下次伤害最高+100%', apply: () => Player.heavyCharge = true, req: () => !Player.heavyCharge },
+    { id: 'haste', name: '疾风之势', desc: '攻击冷却时间缩短 20%', apply: () => Player.baseCooldown *= 0.8, req: () => true },
+    { id: 'multi', name: '幻影连斩', desc: '每次划屏增加平行的副剑气', apply: () => Player.multiSlash += 1, req: () => true },
+    { id: 'light', name: '轻盈剑体', desc: '冷却额外缩短 30% (代价: 降低15%伤害)', apply: () => Player.lightBlade = true, req: () => !Player.lightBlade },
+    { id: 'linger', name: '剑气留形', desc: '剑气在场上多停留 0.3 秒', apply: () => Player.lingeringQi = true, req: () => !Player.lingeringQi },
+    { id: 'fire', name: '烈焰附魔', desc: '留下持续 4 秒的燃烧轨迹', apply: () => Player.fireTrail = true, req: () => !Player.fireTrail },
+    { id: 'ice', name: '寒冰附魔', desc: '命中施加 30% 减速，持续 2 秒', apply: () => Player.iceEnchant = true, req: () => !Player.iceEnchant },
+    { id: 'lightning', name: '雷霆附魔', desc: '命中30%概率触发连锁闪电电击2人', apply: () => Player.lightningEnchant = true, req: () => !Player.lightningEnchant },
+    { id: 'hellfire', name: '极寒地狱(进阶)', desc: '【需冰+火】烈焰带50%减速，火上敌人受暴击率翻倍', apply: () => Player.hellfire = true, req: () => hasUp('寒冰附魔') && hasUp('烈焰附魔') && !Player.hellfire },
+    { id: 'supercond', name: '超导风暴(进阶)', desc: '【需雷+任意】闪电弹5次，对异常状态伤害+200%', apply: () => Player.superconductor = true, req: () => hasUp('雷霆附魔') && (hasUp('寒冰附魔')||hasUp('烈焰附魔')) && !Player.superconductor },
+    { id: 'plasma', name: '等离子电网(进阶)', desc: '【需火+雷】触发闪电时沿全部火焰轨迹蔓延电击', apply: () => Player.plasmaGrid = true, req: () => hasUp('烈焰附魔') && hasUp('雷霆附魔') && !Player.plasmaGrid },
+    { id: 'shatter', name: '霜雷引爆(进阶)', desc: '【需冰+雷】闪电击中冰冻敌人引发物理爆破与眩晕', apply: () => Player.shatterBurst = true, req: () => hasUp('寒冰附魔') && hasUp('雷霆附魔') && !Player.shatterBurst },
+    { id: 'fatal', name: '致命处决(进阶)', desc: '【需任意2种狂战基础】暴击伤害倍率提升至300%', apply: () => Player.fatalExecution = true, req: () => countBerserkerT1() >= 2 && !Player.fatalExecution },
+    { id: 'blood', name: '嗜血狂热(进阶)', desc: '【需任意2种狂战基础】暴击击杀回血并叠加自身伤害', apply: () => Player.bloodthirst = true, req: () => countBerserkerT1() >= 2 && !Player.bloodthirst },
+    { id: 'isshin', name: '居合·一闪(进阶)', desc: '【需弱点+重击】满蓄力必暴击，化为极细红光极强卡肉', apply: () => Player.isshin = true, req: () => hasUp('弱点洞察') && hasUp('重击蓄能') && !Player.isshin },
+    { id: 'blunt', name: '重剑无锋(进阶)', desc: '【需锋锐+开阔】中心附加钝击，击退非Boss并眩晕1秒', apply: () => Player.bluntHeavy = true, req: () => hasUp('锋锐打磨') && hasUp('开阔视野') && !Player.bluntHeavy },
+    { id: 'ubw', name: '无限剑制(进阶)', desc: '【需任意2种幻影基础】副剑气伤害不递减', apply: () => Player.unlimitedBlades = true, req: () => countPhantomT1() >= 2 && !Player.unlimitedBlades },
+    { id: 'deflect', name: '幻影弹反(进阶)', desc: '【需任意2种幻影基础】切碎弹幕时向场上敌人反弹剑气', apply: () => Player.phantomDeflect = true, req: () => countPhantomT1() >= 2 && !Player.phantomDeflect },
+    { id: 'echo', name: '时空回响(进阶)', desc: '【需疾风+留形】残留剑气消失时原地爆发二次伤害', apply: () => Player.echoSlash = true, req: () => hasUp('疾风之势') && hasUp('剑气留形') && !Player.echoSlash },
+    { id: 'wall', name: '剑刃壁垒(进阶)', desc: '【需连斩+轻盈】副剑气滞留极长形成绝对防弹风墙', apply: () => Player.bladeWall = true, req: () => hasUp('幻影连斩') && hasUp('轻盈剑体') && !Player.bladeWall },
+    { id: 'cataclysm', name: '元素灾变(觉醒)', desc: '【需冰火雷】交替三色剑气，聚齐三印记引发真实伤害湮灭', apply: () => Player.elementalCataclysm = true, req: () => hasUp('烈焰附魔') && hasUp('寒冰附魔') && hasUp('雷霆附魔') && !Player.elementalCataclysm },
+    { id: 'sky', name: '裂空斩(觉醒)', desc: '【需任意2种狂战进阶】无视划线限制，伤害x5，冷却x2', apply: () => Player.skySplitter = true, req: () => countBerserkerT2() >= 2 && !Player.skySplitter },
+    { id: 'thousand', name: '千刃风暴(觉醒)', desc: '【需任意2种幻影进阶】每次划屏将引发全屏随机剑气轰炸', apply: () => Player.thousandBlades = true, req: () => countPhantomT2() >= 2 && !Player.thousandBlades }
+];
+
+function recalculateStats() {
+    Player.baseDamage = 25; Player.critChance = 0.15; Player.critMult = 2.0; Player.slashSizeMult = 1.0;
+    Player.multiSlash = 0; Player.baseCooldown = 0.3;
+    
+    Player.fireTrail = false; Player.iceEnchant = false; Player.lightningEnchant = false;
+    Player.hellfire = false; Player.superconductor = false; Player.plasmaGrid = false; Player.shatterBurst = false; Player.elementalCataclysm = false;
+    
+    Player.heavyCharge = false; Player.fatalExecution = false; Player.bloodthirst = false;
+    Player.isshin = false; Player.bluntHeavy = false; Player.skySplitter = false;
+
+    Player.lightBlade = false; Player.lingeringQi = false; Player.unlimitedBlades = false; Player.phantomDeflect = false;
+    Player.echoSlash = false; Player.bladeWall = false; Player.thousandBlades = false;
+
+    Object.entries(Player.acquiredUpgrades).forEach(([name, count]) => {
+        const upgrade = Upgrades.find(u => u.name === name);
+        if (upgrade) { for (let i = 0; i < count; i++) upgrade.apply(); }
+    });
+
+    if (Player.lightBlade) { Player.baseDamage *= 0.85; Player.baseCooldown *= 0.7; }
+    if (Player.fatalExecution) { Player.critMult = 3.0; }
+    if (Player.skySplitter) { Player.baseCooldown *= 2.0; }
+}
+
+// ==========================================
+// 4. 核心战斗逻辑 (多边形划屏斩击 & 连携)
+// ==========================================
+let currentSwipePath = []; let currentSwipeDist = 0; const MAX_SWIPE_LENGTH = 500; let isSwiping = false;
+let hasInteractedForVibrate = false; 
+
+function handlePointerDown(e) {
+    if (!hasInteractedForVibrate) { triggerVibrate(1); hasInteractedForVibrate = true; }
+    if (gameState !== 'PLAYING' || Game.ultState === 1) return;
+    AudioSys.init();
+    const rect = canvas.getBoundingClientRect();
+    const x = e.touches ? e.touches[0].clientX - rect.left : e.clientX - rect.left;
+    const y = e.touches ? e.touches[0].clientY - rect.top : e.clientY - rect.top;
+    currentSwipePath = [{ x, y }]; currentSwipeDist = 0; isSwiping = true;
+}
+
+function handlePointerMove(e) {
+    if (!isSwiping || gameState !== 'PLAYING' || Game.ultState === 1) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.touches ? e.touches[0].clientX - rect.left : e.clientX - rect.left;
+    const y = e.touches ? e.touches[0].clientY - rect.top : e.clientY - rect.top;
+    const lastPoint = currentSwipePath[currentSwipePath.length - 1];
+    const dist = Math.hypot(x - lastPoint.x, y - lastPoint.y);
+    if (dist > 8) {
+        currentSwipeDist += dist; currentSwipePath.push({ x, y });
+        let limit = Player.skySplitter ? 99999 : MAX_SWIPE_LENGTH;
+        if (currentSwipeDist >= limit) triggerSwipeEnd();
+    }
+}
+
+function handlePointerUp(e) { triggerSwipeEnd(); }
+
+function triggerSwipeEnd() {
+    if (!isSwiping || gameState !== 'PLAYING' || Game.ultState === 1) return;
+    isSwiping = false;
+    
+    Tutorial.resolve('basic');
+    Tutorial.resolve('cd');
+
+    if (Player.currentCooldown <= 0 && currentSwipeDist > 30) {
+        Game.currentSlashKills = 0; castSlash(currentSwipePath); Player.currentCooldown = Player.baseCooldown;
+    }
+    currentSwipePath = []; currentSwipeDist = 0;
+}
+
+canvas.addEventListener('mousedown', handlePointerDown);
+canvas.addEventListener('mousemove', handlePointerMove);
+window.addEventListener('mouseup', handlePointerUp);
+canvas.addEventListener('touchstart', handlePointerDown, {passive: false});
+canvas.addEventListener('touchmove', handlePointerMove, {passive: false});
+window.addEventListener('touchend', handlePointerUp);
+
+function triggerUltimate() {
+    if (gameState !== 'PLAYING' || Game.ultState === 1 || Player.ultCharge < Player.maxUltCharge) return;
+    
+    Tutorial.resolve('ultimate'); 
+    
+    AudioSys.init();
+    Player.ultCharge = 0; Game.ultState = 1; Game.ultTimer = 0; Game.ultRadius = 0; Game.ultVisualSlashes = []; Game.currentSlashKills = 0; hitStopTime = 0;            
+    AudioSys.playLevelUp(); updateUI();
+    triggerVibrate([100, 50, 200]);                 
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const btnUlt = document.getElementById('ui-ult-btn');
+    if (btnUlt) {
+        btnUlt.addEventListener('mousedown', (e) => { e.stopPropagation(); triggerUltimate(); });
+        btnUlt.addEventListener('touchstart', (e) => { e.stopPropagation(); triggerUltimate(); }, {passive: false});
+        btnUlt.addEventListener('click', (e) => { e.stopPropagation(); triggerUltimate(); });
+    }
+});
+
+// ==========================================
+// 6. 系统界面逻辑与设置
+// ==========================================
+function renderBuildList() {
+    const buildList = document.getElementById('pause-build-list');
+    const entries = Object.entries(Player.acquiredUpgrades);
+    if (entries.length === 0) {
+        buildList.innerHTML = '<div class="text-slate-500 italic text-center py-2">尚未获得升级</div>';
+    } else {
+        buildList.innerHTML = entries.map(([name, count]) => `
+            <div class="flex justify-between bg-white/50 px-2 py-1.5 rounded mb-1 border border-slate-300/30">
+                <span class="font-bold text-slate-700">${name}</span>
+                <span class="text-cyan-700 font-black">Lv.${count}</span>
+            </div>
+        `).join('');
+    }
+}
+
+const leaderboardKey = 'bladeRush_leaderboard_v1';
+function getLeaderboard() { try { return JSON.parse(localStorage.getItem(leaderboardKey)) || []; } catch(e) { return []; } }
+function saveLeaderboard(board) { localStorage.setItem(leaderboardKey, JSON.stringify(board)); }
+function renderLeaderboard() {
+    const board = getLeaderboard(); const list = document.getElementById('leaderboard-list');
+    if (!list) return;
+    if (board.length === 0) { list.innerHTML = `<div class="text-center text-gray-500 text-xs py-2">暂无记录，成为第一人！</div>`; return; }
+    list.innerHTML = board.map((entry, i) => `<div class="flex justify-between w-full text-xs ${i === 0 ? 'text-yellow-400 font-bold' : (i === 1 ? 'text-gray-200 font-bold' : (i === 2 ? 'text-orange-300 font-bold' : 'text-gray-400'))} mb-1 bg-white/5 px-2 py-1 rounded"><span class="truncate pr-2">${i+1}. ${entry.name}</span><span>${entry.score}</span></div>`).join('');
+}
+
+function refreshDebugUpgradesUI() {
+    document.getElementById('debug-upgrades-list').innerHTML = Upgrades.map(u => {
+        const count = Player.acquiredUpgrades[u.name] || 0;
+        return `<div class="flex justify-between items-center bg-slate-700 p-2 rounded mb-1"><span class="text-xs text-cyan-100 font-bold">${u.name} <span class="text-yellow-400 ml-1">Lv.${count}</span></span><div class="flex space-x-1"><button class="w-6 h-6 bg-cyan-600 hover:bg-cyan-500 rounded text-white flex items-center justify-center font-bold" onclick="addDebugUpgrade('${u.name}')">+</button><button class="w-6 h-6 bg-red-600 hover:bg-red-500 rounded text-white flex items-center justify-center font-bold" onclick="removeDebugUpgrade('${u.name}')">-</button></div></div>`;
+    }).join('');
+}
+function addDebugUpgrade(name) { Player.acquiredUpgrades[name] = (Player.acquiredUpgrades[name] || 0) + 1; recalculateStats(); refreshDebugUpgradesUI(); updateUI(); }
+function removeDebugUpgrade(name) { if (Player.acquiredUpgrades[name] > 0) { Player.acquiredUpgrades[name]--; if (Player.acquiredUpgrades[name] === 0) delete Player.acquiredUpgrades[name]; recalculateStats(); refreshDebugUpgradesUI(); updateUI(); } }
+
+document.addEventListener('DOMContentLoaded', () => {
+    
+    const btnPause = document.getElementById('btn-pause');
+    const pauseScreen = document.getElementById('pause-screen');
+    const pauseContent = document.getElementById('pause-content');
+    
+    if (btnPause) {
+        btnPause.onclick = () => {
+            if (gameState === 'PLAYING' && Game.ultState === 0) {
+                gameState = 'PAUSED'; renderBuildList();
+                
+                const bgmToggle = document.getElementById('setting-bgm');
+                if(bgmToggle) bgmToggle.checked = Config.bgmEnabled;
+                const sfxToggle = document.getElementById('setting-sfx');
+                if(sfxToggle) sfxToggle.checked = Config.sfxEnabled;
+                const vibrateToggle = document.getElementById('setting-vibrate');
+                if(vibrateToggle) vibrateToggle.checked = Config.vibrateEnabled;
+                const fxtextToggle = document.getElementById('setting-fxtext');
+                if(fxtextToggle) fxtextToggle.checked = Config.fxTextEnabled;
+                
+                const godmodeToggle = document.getElementById('debug-godmode');
+                if(godmodeToggle) godmodeToggle.checked = Player.godMode;
+                
+                const lvlDisplay = document.getElementById('debug-lvl-display');
+                if(lvlDisplay) lvlDisplay.innerText = Game.level;
+                
+                const spawnRateSlider = document.getElementById('debug-spawn-rate');
+                if(spawnRateSlider) spawnRateSlider.value = Game.spawnRate;
+                
+                const spawnDisplay = document.getElementById('debug-spawn-display');
+                if(spawnDisplay) spawnDisplay.innerText = Game.spawnRate.toFixed(1) + 's';
+                
+                refreshDebugUpgradesUI();
+                
+                pauseScreen.classList.remove('hidden'); pauseScreen.classList.add('flex');
+                pauseContent.classList.remove('hidden'); pauseContent.classList.add('flex');
+                document.getElementById('settings-panel').classList.remove('flex'); document.getElementById('settings-panel').classList.add('hidden');
+                document.getElementById('debug-panel').classList.remove('flex'); document.getElementById('debug-panel').classList.add('hidden');
+                document.getElementById('howto-panel').classList.remove('flex'); document.getElementById('howto-panel').classList.add('hidden');
+            }
+        };
+    }
+
+    const btnResume = document.getElementById('btn-resume');
+    if (btnResume) {
+        btnResume.onclick = () => {
+            pauseScreen.classList.add('hidden'); pauseScreen.classList.remove('flex');
+            gameState = 'PLAYING'; lastTime = performance.now(); 
+            if (Config.bgmEnabled) AudioSys.startBGM();
+        };
+    }
+    
+    const btnQuit = document.getElementById('btn-quit');
+    if (btnQuit) {
+        btnQuit.onclick = () => { pauseScreen.classList.add('hidden'); pauseScreen.classList.remove('flex'); gameOver(); };
+    }
+
+    const btnSettingsOpen = document.getElementById('btn-settings-open');
+    if(btnSettingsOpen) btnSettingsOpen.onclick = () => { pauseContent.classList.remove('flex'); pauseContent.classList.add('hidden'); document.getElementById('settings-panel').classList.remove('hidden'); document.getElementById('settings-panel').classList.add('flex'); };
+    
+    const btnSettingsClose = document.getElementById('btn-settings-close');
+    if(btnSettingsClose) btnSettingsClose.onclick = () => { document.getElementById('settings-panel').classList.remove('flex'); document.getElementById('settings-panel').classList.add('hidden'); pauseContent.classList.remove('hidden'); pauseContent.classList.add('flex'); };
+
+    const btnHowtoOpen = document.getElementById('btn-howto-open');
+    if(btnHowtoOpen) btnHowtoOpen.onclick = () => { document.getElementById('settings-panel').classList.remove('flex'); document.getElementById('settings-panel').classList.add('hidden'); document.getElementById('howto-panel').classList.remove('hidden'); document.getElementById('howto-panel').classList.add('flex'); };
+    
+    const btnHowtoClose = document.getElementById('btn-howto-close');
+    if(btnHowtoClose) btnHowtoClose.onclick = () => { document.getElementById('howto-panel').classList.remove('flex'); document.getElementById('howto-panel').classList.add('hidden'); document.getElementById('settings-panel').classList.remove('hidden'); document.getElementById('settings-panel').classList.add('flex'); };
+    
+    const btnDebugOpen = document.getElementById('btn-debug-open');
+    if(btnDebugOpen) btnDebugOpen.onclick = () => { document.getElementById('settings-panel').classList.remove('flex'); document.getElementById('settings-panel').classList.add('hidden'); document.getElementById('debug-panel').classList.remove('hidden'); document.getElementById('debug-panel').classList.add('flex'); };
+    
+    const btnDebugClose = document.getElementById('btn-debug-close');
+    if(btnDebugClose) btnDebugClose.onclick = () => { document.getElementById('debug-panel').classList.remove('flex'); document.getElementById('debug-panel').classList.add('hidden'); document.getElementById('settings-panel').classList.remove('hidden'); document.getElementById('settings-panel').classList.add('flex'); renderBuildList(); };
+
+    const debugLvlUp = document.getElementById('debug-lvl-up');
+    if(debugLvlUp) debugLvlUp.onclick = () => { Game.level++; document.getElementById('debug-lvl-display').innerText = Game.level; updateUI(); };
+    
+    const debugLvlDown = document.getElementById('debug-lvl-down');
+    if(debugLvlDown) debugLvlDown.onclick = () => { if (Game.level > 1) { Game.level--; document.getElementById('debug-lvl-display').innerText = Game.level; updateUI(); } };
+    
+    const debugSpawnRate = document.getElementById('debug-spawn-rate');
+    if(debugSpawnRate) debugSpawnRate.oninput = (e) => { Game.spawnRate = parseFloat(e.target.value); document.getElementById('debug-spawn-display').innerText = Game.spawnRate.toFixed(1) + 's'; };
+
+    const btnSubmitScore = document.getElementById('btn-submit-score');
+    if (btnSubmitScore) {
+        btnSubmitScore.onclick = () => {
+            const nameInput = document.getElementById('player-name').value.trim() || '匿名武士'; const board = getLeaderboard();
+            board.push({ name: nameInput, score: Game.score }); board.sort((a,b) => b.score - a.score); board.splice(10); saveLeaderboard(board);
+            document.getElementById('submit-score-container').classList.add('hidden'); renderLeaderboard();
+        };
+    }
+    
+    function setupToggle(id, configKey, callback) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.checked = Config[configKey];
+        el.addEventListener('change', (e) => {
+            Config[configKey] = e.target.checked;
+            if (callback) callback(Config[configKey]);
+        });
+    }
+
+    setupToggle('setting-bgm', 'bgmEnabled', (isOn) => {
+        if (isOn) AudioSys.startBGM(); 
+        else AudioSys.stopBGM();
+    });
+    setupToggle('setting-sfx', 'sfxEnabled');
+    setupToggle('setting-vibrate', 'vibrateEnabled');
+    setupToggle('setting-fxtext', 'fxTextEnabled', (isOn) => {
+        if (!isOn) Game.floatingTexts = []; 
+    });
+
+    const debugGodmode = document.getElementById('debug-godmode');
+    if (debugGodmode) {
+        debugGodmode.addEventListener('change', (e) => Player.godMode = e.target.checked);
+    }
+    
+    const btnStart = document.getElementById('btn-start');
+    if(btnStart) btnStart.onclick = resetGame;
+    
+    const btnRestart = document.getElementById('btn-restart');
+    if(btnRestart) btnRestart.onclick = resetGame;
+});
+
+
+// ==========================================
+// 5. 核心逻辑 (流派判定与多层检测)
+// ==========================================
+function getOffsetPath(originalPath, offsetDist) {
+    if (originalPath.length < 2) return originalPath;
+    const newPath = [];
+    for (let i = 0; i < originalPath.length; i++) {
+        let prev = i > 0 ? originalPath[i-1] : originalPath[i];
+        let next = i < originalPath.length - 1 ? originalPath[i+1] : originalPath[i];
+        if (i === 0) next = originalPath[1]; if (i === originalPath.length - 1) prev = originalPath[originalPath.length - 2];
+        let dx = next.x - prev.x; let dy = next.y - prev.y; let len = Math.hypot(dx, dy);
+        if (len === 0) { newPath.push({ x: originalPath[i].x, y: originalPath[i].y }); continue; }
+        newPath.push({ x: originalPath[i].x + (-dy / len) * offsetDist, y: originalPath[i].y + (dx / len) * offsetDist });
+    }
+    return newPath;
+}
+
+function createFloatingText(x, y, t, c, cr) { 
+    if (!Config.fxTextEnabled) return; 
+    Game.floatingTexts.push({x, y, text: t, color: c, life: 0.6, vy: -50, size: cr?24:16}); 
+}
+
+function triggerLightning(sourceEnemy) {
+    if (Game.timePassed - Game.lastLightningSoundTime > 0.1) { AudioSys.playLightning(); Game.lastLightningSoundTime = Game.timePassed; }
+
+    if (Player.shatterBurst && sourceEnemy.freezeTimer > 0) {
+        sourceEnemy.freezeTimer = 0;
+        Game.explosions.push({ x: sourceEnemy.x, y: sourceEnemy.y, radius: 80, life: 0.2, maxLife: 0.2, damage: Player.baseDamage * 2.0, color: '#00ffff' });
+        createFloatingText(sourceEnemy.x, sourceEnemy.y, "霜雷破!", "#00ffff", true);
+    }
+
+    let targetsCount = Player.superconductor ? 5 : 2;
+    let candidates = Game.enemies.filter(e => e !== sourceEnemy && e.hp > 0 && Math.hypot(e.x - sourceEnemy.x, e.y - sourceEnemy.y) < 250);
+    candidates.sort((a,b) => Math.hypot(a.x - sourceEnemy.x, a.y - sourceEnemy.y) - Math.hypot(b.x - sourceEnemy.x, b.y - sourceEnemy.y));
+    let targets = candidates.slice(0, targetsCount);
+
+    targets.forEach(target => {
+        let dmg = Player.baseDamage * 0.8;
+        if (Player.superconductor && (target.onFire > 0 || target.freezeTimer > 0)) dmg *= 3;
+        
+        if (Player.shatterBurst && target.freezeTimer > 0) {
+            target.freezeTimer = 0;
+            Game.explosions.push({ x: target.x, y: target.y, radius: 80, life: 0.2, maxLife: 0.2, damage: Player.baseDamage * 2.0, color: '#00ffff' });
+        }
+
+        target.hp -= dmg;
+        Game.lightnings.push({ x1: sourceEnemy.x, y1: sourceEnemy.y, x2: target.x, y2: target.y, life: 0.2 });
+        createFloatingText(target.x, target.y, Math.floor(dmg), "#cc00ff", false);
+        createParticles(target.x, target.y, '#cc00ff', 5);
+        if (target.hp <= 0) {
+            if (target.type === 'BOSS') Game.bossActive = false;
+            processEnemyDeath(target, false);
+            const index = Game.enemies.indexOf(target); if(index > -1) Game.enemies.splice(index, 1);
+        }
+    });
+
+    if (Player.plasmaGrid && Game.fireTrails.length > 0) {
+        Game.fireTrails.forEach(fire => {
+            Game.lightnings.push({ path: fire.path, life: 0.2 });
+            Game.enemies.forEach(e => {
+                if (e.hp > 0) {
+                    let hit = false;
+                    for (let j = 0; j < fire.path.length - 1; j++) {
+                        let distSq = pointToSegmentDistSq(e.x, e.y, fire.path[j].x, fire.path[j].y, fire.path[j+1].x, fire.path[j+1].y);
+                        if (distSq < Math.pow(e.radius + 20, 2)) { hit = true; break; }
+                    }
+                    if (hit) {
+                        e.hp -= Player.baseDamage * 0.8;
+                        createFloatingText(e.x, e.y, "电网!", "#cc00ff", false);
+                        if (e.hp <= 0) {
+                            if (e.type === 'BOSS') Game.bossActive = false;
+                            processEnemyDeath(e, false);
+                            const index = Game.enemies.indexOf(e); if(index > -1) Game.enemies.splice(index, 1);
+                        }
+                    }
+                }
+            });
+        });
+    }
+}
+
+function castSlash(path, isThousandProc = false) {
+    if (path.length < 2) return;
+    if (!isThousandProc) AudioSys.playSlash();
+    
+    let isCrit = Math.random() < Player.critChance;
+    
+    let isMaxCharge = Game.timeSinceLastSlash >= 2.0;
+    let chargeMult = Player.heavyCharge ? Math.min(2.0, 1.0 + Game.timeSinceLastSlash * 0.5) : 1.0;
+    if (Player.isshin && isMaxCharge) { isCrit = true; } 
+    
+    let bloodMult = 1.0 + (Player.bloodthirstStacks * 0.1);
+    let skyMult = Player.skySplitter ? 5.0 : 1.0;
+    let finalDamage = Player.baseDamage * chargeMult * bloodMult * skyMult * (isCrit ? Player.critMult : 1);
+    
+    if (!isThousandProc) Game.timeSinceLastSlash = 0; 
+    
+    let currentElement = 0; let baseThickness = 12 * Player.slashSizeMult;
+    if (Player.elementalCataclysm) {
+        if (!isThousandProc) Game.cataclysmIndex = (Game.cataclysmIndex % 3) + 1; 
+        currentElement = Game.cataclysmIndex; baseThickness *= 1.5; 
+    }
+    
+    let baseLife = Player.lingeringQi ? 0.5 : 0.2;
+
+    const createSlashObj = (currentPath, scaleThick = 1.0, scaleDmg = 1.0, isSub = false) => {
+        let actualLife = (isSub && Player.bladeWall) ? 1.5 : baseLife;
+
+        Game.slashes.push({
+            path: currentPath, thickness: baseThickness * scaleThick,
+            life: actualLife, maxLife: actualLife,
+            damage: finalDamage * scaleDmg, isCrit: isCrit,
+            isIsshin: Player.isshin && isMaxCharge && !isSub, 
+            isSub: isSub, element: currentElement, hitEnemies: new Set()
+        });
+        
+        if (Player.fireTrail) Game.fireTrails.push({ path: currentPath, life: 4.0, maxLife: 4.0 });
+    };
+
+    createSlashObj(path, 1.0, 1.0, false);
+
+    let secondaryThick = Player.unlimitedBlades ? 1.0 : 0.5;
+    let secondaryDmg = Player.unlimitedBlades ? 1.0 : 0.5;
+    for (let i = 1; i <= Player.multiSlash; i++) {
+        const offsetDist = 12 * i * (Player.unlimitedBlades ? 1.5 : 1.0); 
+        createSlashObj(getOffsetPath(path, offsetDist), secondaryThick, secondaryDmg, true);
+        createSlashObj(getOffsetPath(path, -offsetDist), secondaryThick, secondaryDmg, true);
+    }
+
+    if (Player.thousandBlades && !isThousandProc) {
+        let numExtra = 3 + Math.floor(Math.random() * 3);
+        for(let i=0; i<numExtra; i++) {
+            let rx = width/2 + (Math.random()-0.5)*width*0.8; let ry = height/2 + (Math.random()-0.5)*height*0.8;
+            let angle = Math.random() * Math.PI * 2; let length = 100 + Math.random()*150;
+            let rPath = [ {x: rx - Math.cos(angle)*length/2, y: ry - Math.sin(angle)*length/2}, {x: rx + Math.cos(angle)*length/2, y: ry + Math.sin(angle)*length/2} ];
+            castSlash(rPath, true); 
+        }
+    }
+}
+
+function processEnemyDeath(enemy, isUlt = false) {
+    Game.currentSlashKills++;
+    let earnedScore = 8 + 2 * Game.currentSlashKills;
+    if (enemy.type === 'BOSS') earnedScore += 500;
+    if (Game.currentSlashKills >= 2) { Game.comboDisplay.count = Game.currentSlashKills; Game.comboDisplay.life = 1.5; }
+
+    createParticles(enemy.x, enemy.y, enemy.color, 15);
+    Game.expGems.push({ x: enemy.x, y: enemy.y, vy: -150 });
+    
+    if (Player.lifesteal > 0) { Player.hp = Math.min(Player.maxHp, Player.hp + Player.lifesteal); updateUI(); }
+    if (!isUlt && Player.ultCharge < Player.maxUltCharge) { Player.ultCharge++; updateUI(); }
+    Game.score += earnedScore; document.getElementById('ui-score').innerText = Game.score;
+}
+
+// ==========================================
+// 7. 敌人生成与循环更新 (核心系统)
+// ==========================================
+
+function spawnBoss() {
+    createFloatingText(width/2, height/3, "⚠ 高维巨型机体降临 ⚠", "#ff003c", true);
+    let bossHp = 300 + Game.level * 80 + Math.floor(Game.score / 4);
+    Game.enemies.push({ x: width / 2, y: -60, radius: 35, hp: bossHp, maxHp: bossHp, speed: 30, type: 'BOSS', color: '#ff003c', onFire: 0, freezeTimer: 0, stunTimer: 0, kbVx: 0, kbVy: 0, attackTimer: 2.0, hitByElements: new Set() });
+}
+
+function spawnEnemy() {
+    if (Game.timeScale < 0.5) return;
+
+    const x = Math.random() * (width - 40) + 20;
+    
+    if (!Tutorial.progress['cd'] && Game.score > 25 && Game.enemies.length === 0) {
+        Game.enemies.push({ x: width/2 - 50, y: -30, radius: 14, hp: 30, maxHp: 30, speed: 40, type: 'NORMAL', color: '#b026ff', onFire: 0, freezeTimer: 0, stunTimer: 0, kbVx: 0, kbVy: 0, hitByElements: new Set() });
+        Game.enemies.push({ x: width/2,      y: -30, radius: 14, hp: 30, maxHp: 30, speed: 40, type: 'NORMAL', color: '#b026ff', onFire: 0, freezeTimer: 0, stunTimer: 0, kbVx: 0, kbVy: 0, hitByElements: new Set() });
+        Game.enemies.push({ x: width/2 + 50, y: -30, radius: 14, hp: 30, maxHp: 30, speed: 40, type: 'NORMAL', color: '#b026ff', onFire: 0, freezeTimer: 0, stunTimer: 0, kbVx: 0, kbVy: 0, hitByElements: new Set() });
+        
+        Tutorial.trigger('cd', '进阶连击', '注意底部【红色光环】冷却！\n一笔连线击杀多敌，可获巨额加成！', true, () => ({x: Player.x, y: Player.y, r: 60}));
+        return;
+    }
+
+    let types = [ 
+        { type: 'NORMAL', weight: 100 }, 
+        { type: 'DASH', weight: 20 + Game.level * 2 } 
+    ];
+    if (Game.score >= 100) types.push({ type: 'ARCHER', weight: 25 + Math.floor(Game.score/100) }); 
+    if (Game.score >= 200) types.push({ type: 'SHIELD', weight: 30 + Math.floor(Game.score/100) }); 
+    if (Game.score >= 500) types.push({ type: 'EVADE', weight: 25 + Math.floor(Game.score/100) });
+    if (Game.score >= 800) types.push({ type: 'BLINK', weight: 20 + Math.floor(Game.score/100) });
+    if (Game.score >= 1200) types.push({ type: 'SPIKE', weight: 15 + Math.floor(Game.score/100) });
+
+    let totalWeight = types.reduce((sum, t) => sum + t.weight, 0); let rand = Math.random() * totalWeight; let selectedType = 'NORMAL';
+    for (let t of types) { if (rand < t.weight) { selectedType = t.type; break; } rand -= t.weight; }
+    
+    if (selectedType === 'SPIKE') {
+        let spikeCount = Game.enemies.filter(e => e.type === 'SPIKE').length;
+        if (spikeCount >= 3) {
+            selectedType = 'NORMAL'; 
+        }
+    }
+
+    let dynamicHp = 30 + Game.level * 10 + Math.floor(Game.score / 20);
+    let enemy = { 
+        x: x, y: -30, radius: 14, hp: dynamicHp, maxHp: dynamicHp, 
+        speed: 50 + Math.random() * 20, type: selectedType, color: '#b026ff', 
+        onFire: 0, freezeTimer: 0, stunTimer: 0, kbVx: 0, kbVy: 0, hitByElements: new Set() 
+    };
+
+    if (selectedType === 'DASH') { enemy.radius = 10; enemy.speed = 120 + Math.random() * 20; enemy.color = '#ff003c'; }
+    else if (selectedType === 'SHIELD') { enemy.hasShield = true; enemy.color = '#0088ff'; }
+    else if (selectedType === 'EVADE') { enemy.speed = 40; enemy.vx = (Math.random() < 0.5 ? 1 : -1) * (120 + Math.random() * 50); enemy.color = '#bfff00'; }
+    else if (selectedType === 'BLINK') { enemy.color = '#e0ffff'; }
+    else if (selectedType === 'SPIKE') { enemy.speed = 35; enemy.color = '#ff8c00'; } 
+    else if (selectedType === 'ARCHER') { enemy.speed = 30; enemy.color = '#00ffaa'; enemy.attackTimer = 2.5; enemy.radius = 12; }
+
+    Game.enemies.push(enemy);
+}
+
+function update(realDt) {
+    if (gameState !== 'PLAYING') return;
+    
+    const dt = realDt * Game.timeScale;
+
+    if (!Tutorial.progress['ultimate'] && Player.ultCharge >= Player.maxUltCharge) {
+        Tutorial.trigger('ultimate', '能量满载', '点击右下角按钮释放时空断裂！\n全屏秒杀并清空弹幕！', false, () => {
+            const btn = document.getElementById('ui-ult-btn');
+            if (btn) {
+                const rect = btn.getBoundingClientRect();
+                const canvasRect = canvas.getBoundingClientRect();
+                return {
+                    x: rect.left + rect.width / 2 - canvasRect.left,
+                    y: rect.top + rect.height / 2 - canvasRect.top,
+                    r: 40
+                };
+            }
+            return {x: width - 38, y: height - 40, r: 50}; 
+        });
+    }
+
+    if (Game.ultState === 1) {
+        Game.ultTimer += dt; Game.ultRadius += 1200 * dt; 
+        if (Math.random() < 0.6) {
+            AudioSys.playSlash(); 
+            const cx = width / 2 + (Math.random() - 0.5) * Game.ultRadius * 1.5; const cy = height / 2 + (Math.random() - 0.5) * Game.ultRadius * 1.5;
+            const angle = Math.random() * Math.PI * 2; const length = 150 + Math.random() * 250;
+            Game.ultVisualSlashes.push({ x1: cx - Math.cos(angle)*length/2, y1: cy - Math.sin(angle)*length/2, x2: cx + Math.cos(angle)*length/2, y2: cy + Math.sin(angle)*length/2, life: 0.1, maxLife: 0.1 });
+        }
+        for (let i = Game.ultVisualSlashes.length - 1; i >= 0; i--) {
+            Game.ultVisualSlashes[i].life -= dt; if (Game.ultVisualSlashes[i].life <= 0) Game.ultVisualSlashes.splice(i, 1);
+        }
+        if (Game.ultTimer >= 1.5) {
+            for (let i = Game.enemies.length - 1; i >= 0; i--) {
+                const enemy = Game.enemies[i];
+                if (enemy.type === 'BOSS') {
+                    let ultDmg = Player.baseDamage * 30; enemy.hp -= ultDmg;
+                    createFloatingText(enemy.x, enemy.y, "大招重创! " + Math.floor(ultDmg), "#00f3ff", true);
+                    if (enemy.hp <= 0) { Game.bossActive = false; triggerVibrate(300); for(let j=0; j<10; j++) Game.expGems.push({ x: enemy.x + (Math.random()-0.5)*40, y: enemy.y + (Math.random()-0.5)*40, vy: -150 - Math.random()*100 }); processEnemyDeath(enemy, true); Game.enemies.splice(i, 1); }
+                } else { processEnemyDeath(enemy, true); Game.enemies.splice(i, 1); }
+            }
+            Game.projectiles = []; screenShake = 35; Game.ultState = 0; Game.ultVisualSlashes = [];
+        }
+        return; 
+    }
+
+    if (hitStopTime > 0) { hitStopTime -= realDt; return; } 
+    if (screenShake > 0) screenShake -= realDt * 30;
+
+    if (Player.hp > 0 && Player.hp < Player.maxHp * 0.5) {
+        let sparkChance = 0.05 + (1 - Player.hp / (Player.maxHp * 0.5)) * 0.15;
+        if (Math.random() < sparkChance) {
+            Game.particles.push({
+                x: Player.x + (Math.random() - 0.5) * Player.radius * 1.5,
+                y: Player.y + (Math.random() - 0.5) * Player.radius * 1.5,
+                vx: (Math.random() - 0.5) * 80,
+                vy: (Math.random() - 0.5) * 80 - 50,
+                life: 0.2 + Math.random() * 0.2,
+                color: Math.random() > 0.5 ? '#facc15' : '#ff003c', 
+                size: Math.random() * 2 + 1
+            });
+        }
+    }
+
+    if (Player.currentCooldown > 0) Player.currentCooldown -= dt;
+    if (Game.comboDisplay.life > 0) Game.comboDisplay.life -= dt;
+    
+    Game.timeSinceLastSlash += dt;
+    if (Player.bloodthirstTimer > 0) { Player.bloodthirstTimer -= dt; if (Player.bloodthirstTimer <= 0) Player.bloodthirstStacks = 0; }
+
+    Game.timePassed += dt; Game.spawnTimer += dt;
+    if (Game.spawnTimer >= Game.spawnRate) {
+        Game.spawnTimer = 0;
+        if (Game.enemies.length < 25 && !Game.bossActive) spawnEnemy();
+        Game.spawnRate = Math.max(0.5, Game.spawnRate - 0.005);
+    }
+    
+    Game.globalSpikeTimer -= dt;
+    if (Game.globalSpikeTimer <= 0) {
+        if (Game.globalSpikeState === 'COOLDOWN') {
+            Game.globalSpikeState = 'WARNING';
+            Game.globalSpikeTimer = 0.5; 
+            
+            if (!Tutorial.progress['spike']) {
+                let spikeEnemy = Game.enemies.find(e => e.type === 'SPIKE');
+                if (spikeEnemy) {
+                    Tutorial.trigger('spike', '生存法则', '怪物高频闪烁即将长出反伤尖刺！\n此时切勿攻击！', false, () => ({x: spikeEnemy.x, y: spikeEnemy.y, r: 50}));
+                }
+            }
+            
+        } else if (Game.globalSpikeState === 'WARNING') {
+            Game.globalSpikeState = 'ACTIVE';
+            Game.globalSpikeTimer = 1.5; 
+        } else if (Game.globalSpikeState === 'ACTIVE') {
+            Game.globalSpikeState = 'COOLDOWN';
+            Game.globalSpikeTimer = 2.0; 
+        }
+    }
+
+    for (let i = Game.explosions.length - 1; i >= 0; i--) {
+        let exp = Game.explosions[i];
+        if (exp.life === exp.maxLife) {
+            Game.enemies.forEach(e => {
+                if (Math.hypot(e.x - exp.x, e.y - exp.y) < exp.radius + e.radius) {
+                    e.hp -= exp.damage;
+                    createFloatingText(e.x, e.y, Math.floor(exp.damage), "#00ffff", false);
+                    if (e.type !== 'BOSS') e.stunTimer = 0.5;
+                    if (e.hp <= 0) {
+                        if (e.type === 'BOSS') Game.bossActive = false;
+                        processEnemyDeath(e, false); const index = Game.enemies.indexOf(e); if(index>-1) Game.enemies.splice(index, 1);
+                    }
+                }
+            });
+        }
+        exp.life -= dt; if (exp.life <= 0) Game.explosions.splice(i, 1);
+    }
+
+    for (let i = Game.projectiles.length - 1; i >= 0; i--) {
+        let p = Game.projectiles[i];
+        
+        if (!Tutorial.progress['deflect'] && p.y > height * 0.2) {
+            Tutorial.trigger('deflect', '高阶防御', '划线精准切碎敌方弹幕！', true, () => ({x: p.x, y: p.y, r: 40}));
+        }
+        
+        if (p.isTracking) { 
+            let targetAngle = Math.atan2(Player.y - p.y, Player.x - p.x);
+            let currentAngle = Math.atan2(p.vy, p.vx);
+            let speed = Math.hypot(p.vx, p.vy);
+            
+            let diff = targetAngle - currentAngle;
+            while (diff <= -Math.PI) diff += Math.PI * 2;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            
+            let turnRate = 2.0 * dt; 
+            let newAngle = currentAngle + Math.max(-turnRate, Math.min(turnRate, diff));
+            
+            p.vx = Math.cos(newAngle) * speed;
+            p.vy = Math.sin(newAngle) * speed;
+        }
+
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+
+        let dist = Math.hypot(Player.x - p.x, Player.y - p.y);
+        if (dist < Player.radius + p.radius) {
+            if (!Player.godMode) { 
+                let dmg = p.damage || 15;
+                Player.hp -= dmg; 
+                screenShake = 10; AudioSys.playDamage(); triggerVibrate(150); updateUI(); 
+            }
+            Game.projectiles.splice(i, 1);
+            if (Player.hp <= 0 && !Player.godMode) gameOver();
+            continue;
+        }
+        if (p.x < -50 || p.x > width + 50 || p.y > height + 50 || p.y < -50) Game.projectiles.splice(i, 1);
+    }
+    
+    for (let i = Game.lightnings.length - 1; i >= 0; i--) {
+        Game.lightnings[i].life -= dt; if (Game.lightnings[i].life <= 0) Game.lightnings.splice(i, 1);
+    }
+
+    for (let i = Game.slashes.length - 1; i >= 0; i--) {
+        const slash = Game.slashes[i];
+        slash.life -= dt;
+        
+        for (let k = Game.projectiles.length - 1; k >= 0; k--) {
+            let p = Game.projectiles[k]; let hitProj = false;
+            for (let j = 0; j < slash.path.length - 1; j++) {
+                if (pointToSegmentDistSq(p.x, p.y, slash.path[j].x, slash.path[j].y, slash.path[j+1].x, slash.path[j+1].y) < Math.pow(p.radius + slash.thickness/2, 2)) { hitProj = true; break; }
+            }
+            if (hitProj) {
+                createParticles(p.x, p.y, p.color, 5); AudioSys.playHit(); hitStopTime = 0.01; Game.projectiles.splice(k, 1);
+                Game.score += 2; document.getElementById('ui-score').innerText = Game.score;
+                triggerVibrate(20); 
+                
+                Tutorial.resolve('deflect'); 
+                
+                if (Player.phantomDeflect) {
+                    let target = Game.bossActive ? Game.enemies.find(e => e.type === 'BOSS') : null;
+                    if (!target && Game.enemies.length > 0) target = Game.enemies[Math.floor(Math.random() * Game.enemies.length)];
+                    if (target) {
+                        let dmg = Player.baseDamage * 2.0; target.hp -= dmg;
+                        createFloatingText(target.x, target.y, "弹反! " + Math.floor(dmg), "#00ffff", false);
+                        let angle = Math.atan2(target.y - p.y, target.x - p.x);
+                        Game.ultVisualSlashes.push({ x1: target.x - Math.cos(angle)*50, y1: target.y - Math.sin(angle)*50, x2: target.x + Math.cos(angle)*50, y2: target.y + Math.sin(angle)*50, life: 0.15, maxLife: 0.15 });
+                    }
+                }
+            }
+        }
+
+        Game.enemies.forEach(enemy => {
+            if (!slash.hitEnemies.has(enemy)) {
+                let hit = false;
+                for (let j = 0; j < slash.path.length - 1; j++) {
+                    if (pointToSegmentDistSq(enemy.x, enemy.y, slash.path[j].x, slash.path[j].y, slash.path[j+1].x, slash.path[j+1].y) < Math.pow(enemy.radius + slash.thickness/2, 2)) { hit = true; break; }
+                }
+                
+                if (hit) {
+                    slash.hitEnemies.add(enemy);
+
+                    if (Player.bluntHeavy && enemy.type !== 'BOSS') {
+                        enemy.stunTimer = 1.0;
+                        let angle = Math.atan2(enemy.y - Player.y, enemy.x - Player.x);
+                        enemy.kbVx = Math.cos(angle) * 400; enemy.kbVy = Math.sin(angle) * 400;
+                    }
+
+                    if (Player.iceEnchant) enemy.freezeTimer = 2.0; 
+
+                    if (enemy.type === 'SHIELD' && enemy.hasShield) {
+                        enemy.hasShield = false; AudioSys.playHit(); createParticles(enemy.x, enemy.y, '#00f3ff', 10); 
+                        createFloatingText(enemy.x, enemy.y, "护盾击破!", "#00f3ff", false); 
+                        return; 
+                    }
+
+                    if (enemy.type === 'SPIKE' && Game.globalSpikeState === 'ACTIVE' && !Player.godMode) {
+                        Player.hp -= 2; screenShake = 15; AudioSys.playDamage(); triggerVibrate(150); updateUI(); 
+                        createFloatingText(Player.x, Player.y - 20, "反伤!", "#ff003c", true);
+                        if (Player.hp <= 0) gameOver();
+                    }
+
+                    let currentHitCrit = slash.isCrit; let currentHitDamage = slash.damage;
+                    if (!currentHitCrit && Player.hellfire && enemy.onFire > 0) {
+                        if (Math.random() < Player.critChance * 2) { currentHitCrit = true; currentHitDamage = (slash.damage / (Player.critChance>0?1:1)) * Player.critMult; } 
+                    }
+
+                    enemy.hp -= currentHitDamage; AudioSys.playHit();
+                    hitStopTime = slash.isIsshin ? 0.1 : 0.05; 
+                    screenShake = currentHitCrit ? 15 : 5;
+                    
+                    if (currentHitCrit) triggerVibrate(50); 
+                    else triggerVibrate(15); 
+
+                    createParticles(enemy.x, enemy.y, '#ffffff', 5);
+                    createFloatingText(enemy.x, enemy.y, Math.floor(currentHitDamage), currentHitCrit ? '#ffcc00' : '#ffffff', currentHitCrit);
+
+                    if (currentHitCrit && Player.bloodthirst) enemy.bloodthirstCritHit = true;
+                    if (Player.lightningEnchant && Math.random() < 0.3) triggerLightning(enemy);
+
+                    if (slash.element > 0) {
+                        enemy.hitByElements.add(slash.element);
+                        if (enemy.hitByElements.size >= 3) {
+                            let explosionDmg = Player.baseDamage * 15; enemy.hp -= explosionDmg;
+                            createFloatingText(enemy.x, enemy.y, "✦ 元素湮灭 ✦", "#ffffff", true); 
+                            createParticles(enemy.x, enemy.y, '#ffffff', 40); screenShake = 30; triggerVibrate(80); enemy.hitByElements.clear(); 
+                        }
+                    }
+
+                    if (enemy.type === 'BLINK' && enemy.hp > 0) {
+                        createParticles(enemy.x, enemy.y, '#e0ffff', 15); enemy.x = Math.random() * (width - 40) + 20; 
+                        createFloatingText(enemy.x, enemy.y, "闪现!", "#e0ffff", false);
+                    }
+                }
+            }
+        });
+        
+        if (slash.life <= 0) {
+            if (Player.echoSlash && slash.path.length >= 2) {
+                let mx = (slash.path[0].x + slash.path[1].x)/2; let my = (slash.path[0].y + slash.path[1].y)/2;
+                Game.explosions.push({ x: mx, y: my, radius: 45, life: 0.2, maxLife: 0.2, damage: slash.damage * 0.5, color: '#00ffff' });
+            }
+            Game.slashes.splice(i, 1);
+        }
+    }
+
+    for (let i = Game.fireTrails.length - 1; i >= 0; i--) {
+        const fire = Game.fireTrails[i];
+        fire.life -= dt;
+        
+        for (let k = Game.projectiles.length - 1; k >= 0; k--) {
+            let p = Game.projectiles[k];
+            if (p.isArrow) {
+                let hitArrow = false;
+                for (let j = 0; j < fire.path.length - 1; j++) {
+                    if (pointToSegmentDistSq(p.x, p.y, fire.path[j].x, fire.path[j].y, fire.path[j+1].x, fire.path[j+1].y) < Math.pow(p.radius + 15, 2)) { 
+                        hitArrow = true; break; 
+                    }
+                }
+                if (hitArrow) {
+                    createParticles(p.x, p.y, p.color, 5);
+                    createFloatingText(p.x, p.y, "焚毁", "#ff5500", false);
+                    Game.projectiles.splice(k, 1);
+                }
+            }
+        }
+        
+        Game.enemies.forEach(enemy => {
+            let hit = false;
+            for (let j = 0; j < fire.path.length - 1; j++) {
+                if (pointToSegmentDistSq(enemy.x, enemy.y, fire.path[j].x, fire.path[j].y, fire.path[j+1].x, fire.path[j+1].y) < Math.pow(enemy.radius + 15, 2)) { hit = true; break; }
+            }
+            if (hit) { 
+                if (enemy.type === 'SHIELD' && enemy.hasShield) {
+                    enemy.hasShield = false; AudioSys.playHit(); createParticles(enemy.x, enemy.y, '#00f3ff', 10); 
+                    createFloatingText(enemy.x, enemy.y, "护盾融化!", "#00f3ff", false);
+                } else {
+                    enemy.hp -= Player.baseDamage * 0.5 * dt; enemy.onFire = 0.2; 
+                    if (Game.timePassed - Game.lastFireSoundTime > 0.1) { AudioSys.playFireHit(); Game.lastFireSoundTime = Game.timePassed; }
+                }
+            }
+        });
+        if (fire.life <= 0) Game.fireTrails.splice(i, 1);
+    }
+
+    if (gameState !== 'PLAYING') return; 
+
+    for (let i = Game.enemies.length - 1; i >= 0; i--) {
+        const enemy = Game.enemies[i];
+        
+        if (!Tutorial.progress['basic'] && Game.score === 0 && enemy.y > height * 0.3) {
+            Tutorial.trigger('basic', '链接启动', '滑动手指生成剑气，\n松开瞬间触发致命斩击！', true, () => ({x: enemy.x, y: enemy.y, r: 40}));
+        }
+        
+        if (enemy.freezeTimer > 0) enemy.freezeTimer -= dt;
+        if (enemy.onFire > 0) {
+            enemy.onFire -= dt;
+            if (Math.random() < 0.3) Game.particles.push({ x: enemy.x + (Math.random() - 0.5) * enemy.radius * 1.5, y: enemy.y - enemy.radius + Math.random() * 5, vx: (Math.random() - 0.5) * 20, vy: -30 - Math.random() * 40, life: 0.3 + Math.random() * 0.2, color: Math.random() > 0.5 ? '#ff6600' : '#ffcc00', size: Math.random() * 3 + 1 });
+        }
+
+        enemy.x += enemy.kbVx * dt; enemy.y += enemy.kbVy * dt;
+        enemy.kbVx *= 0.9; enemy.kbVy *= 0.9;
+
+        if (enemy.stunTimer > 0) {
+            enemy.stunTimer -= dt;
+        } else {
+            let slowMult = enemy.freezeTimer > 0 ? 0.7 : 1.0;
+            if (Player.hellfire && enemy.onFire > 0) slowMult = Math.min(slowMult, 0.5); 
+
+            if (enemy.type === 'BOSS') {
+                enemy.attackTimer -= dt;
+                if (enemy.attackTimer <= 0) {
+                    enemy.attackTimer = 2.0; 
+                    let projectileCount = 12;
+                    let scalingDamage = 15 + Game.level * 2; 
+                    
+                    let numTrackers = Math.floor(Math.random() * 3) + 2; 
+                    let trackerIndices = new Set();
+                    while (trackerIndices.size < numTrackers) {
+                        trackerIndices.add(Math.floor(Math.random() * projectileCount));
+                    }
+                    
+                    for (let j = 0; j < projectileCount; j++) {
+                        let angle = (Math.PI * 2 / projectileCount) * j + (Game.timePassed * 1.5);
+                        let isTracker = trackerIndices.has(j); 
+                        
+                        Game.projectiles.push({ 
+                            x: enemy.x, 
+                            y: enemy.y, 
+                            vx: Math.cos(angle) * 120, 
+                            vy: Math.sin(angle) * 120 + 40, 
+                            radius: 8, 
+                            color: isTracker ? '#ff8800' : '#facc15', 
+                            damage: scalingDamage,
+                            isTracking: isTracker 
+                        });
+                    }
+                }
+            } else if (enemy.type === 'ARCHER') {
+                enemy.attackTimer -= dt * slowMult; 
+                
+                if (enemy.attackTimer <= 1.0 && enemy.attackTimer > 0) {
+                    if (Math.random() < 0.3) {
+                        Game.particles.push({ 
+                            x: enemy.x + (Math.random()-0.5)*25, 
+                            y: enemy.y + (Math.random()-0.5)*25, 
+                            vx: (enemy.x - (enemy.x + (Math.random()-0.5)*25))*3, 
+                            vy: (enemy.y - (enemy.y + (Math.random()-0.5)*25))*3, 
+                            life: 0.15, color: '#00ffaa', size: 1.5 
+                        });
+                    }
+                }
+
+                if (enemy.attackTimer <= 0) {
+                    if (!Game.bossActive && Game.projectiles.length >= 4) {
+                        enemy.attackTimer = 0.5; 
+                    } else {
+                        enemy.attackTimer = 2.5;
+                        let angle = Math.atan2(Player.y - enemy.y, Player.x - enemy.x);
+                        Game.projectiles.push({ x: enemy.x, y: enemy.y, vx: Math.cos(angle) * 160, vy: Math.sin(angle) * 160, radius: 4, color: '#00ffaa', damage: 5, isArrow: true });
+                    }
+                }
+            } 
+
+            if (enemy.type === 'EVADE') {
+                enemy.x += enemy.vx * slowMult * dt;
+                if (enemy.x < enemy.radius) { enemy.x = enemy.radius; enemy.vx *= -1; }
+                if (enemy.x > width - enemy.radius) { enemy.x = width - enemy.radius; enemy.vx *= -1; }
+                enemy.y += enemy.speed * slowMult * dt; 
+            } else {
+                const dx = Player.x - enemy.x, dy = Player.y - enemy.y, dist = Math.hypot(dx, dy);
+                if (dist > 0) { enemy.x += (dx / dist) * enemy.speed * slowMult * dt; enemy.y += (dy / dist) * enemy.speed * slowMult * dt; }
+            }
+        }
+
+        const dx = Player.x - enemy.x, dy = Player.y - enemy.y, dist = Math.hypot(dx, dy);
+        if (dist < enemy.radius + Player.radius) {
+            if (!Player.godMode) {
+                Player.hp -= (enemy.type === 'BOSS' ? 30 : 10); screenShake = 20; AudioSys.playDamage(); triggerVibrate(150); updateUI();
+            }
+            Game.enemies.splice(i, 1);
+            if (enemy.type === 'BOSS') Game.bossActive = false; 
+            if (Player.hp <= 0 && !Player.godMode) gameOver();
+            continue;
+        }
+
+        if (enemy.hp <= 0) {
+            if (enemy.bloodthirstCritHit && Player.bloodthirst) {
+                Player.hp = Math.min(Player.maxHp, Player.hp + 1); Player.bloodthirstStacks++; Player.bloodthirstTimer = 2.0; updateUI(); 
+                createFloatingText(Player.x, Player.y - 30, "+1 HP", "#ff0000", false);
+            }
+            if (enemy.type === 'BOSS') { Game.bossActive = false; triggerVibrate(300); for(let j=0; j<10; j++) Game.expGems.push({ x: enemy.x + (Math.random()-0.5)*40, y: enemy.y + (Math.random()-0.5)*40, vy: -150 - Math.random()*100 }); }
+            processEnemyDeath(enemy, false); Game.enemies.splice(i, 1);
+        }
+    }
+
+    for (let i = Game.expGems.length - 1; i >= 0; i--) {
+        const gem = Game.expGems[i];
+        gem.vy += 400 * dt; gem.y += gem.vy * dt;
+        if (gem.y > height - 200) {
+            const dx = Player.x - gem.x, dy = Player.y - gem.y, dist = Math.hypot(dx, dy);
+            gem.x += (dx / dist) * 400 * dt; gem.y += (dy / dist) * 400 * dt;
+            if (dist < Player.radius + 15) { Game.expGems.splice(i, 1); addExp(1); }
+        }
+    }
+
+    for (let i = Game.particles.length - 1; i >= 0; i--) {
+        const p = Game.particles[i]; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt;
+        if (p.life <= 0) Game.particles.splice(i, 1);
+    }
+    if (Config.fxTextEnabled) {
+        for (let i = Game.floatingTexts.length - 1; i >= 0; i--) {
+            const t = Game.floatingTexts[i]; t.y += t.vy * dt; t.life -= dt;
+            if (t.life <= 0) Game.floatingTexts.splice(i, 1);
+        }
+    } else {
+        Game.floatingTexts = [];
+    }
+}
+
+// ==========================================
+// 8. 渲染系统 (主角动态状态渲染)
+// ==========================================
+function draw() {
+    ctx.fillStyle = '#050510'; ctx.fillRect(0, 0, width, height);
+    ctx.strokeStyle = 'rgba(0, 243, 255, 0.15)'; ctx.lineWidth = 1.5;
+    
+    const gridSpacing = 40; const scrollSpeed = 100 * Game.timeScale; 
+    Game.bgOffset = (Game.bgOffset || 0) + scrollSpeed * 0.016; 
+    const gridOffset = Game.bgOffset % gridSpacing;
+    
+    for(let y = gridOffset; y < height; y += gridSpacing) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); }
+    for(let x = 0; x < width; x += gridSpacing) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke(); }
+
+    ctx.save();
+    if (screenShake > 0) { ctx.translate((Math.random()-0.5)*screenShake, (Math.random()-0.5)*screenShake); }
+
+    if (Game.ultState === 1) {
+        ctx.save(); ctx.beginPath(); ctx.arc(width/2, height/2, Game.ultRadius, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0, 243, 255, 0.15)'; ctx.fill(); ctx.strokeStyle = '#00f3ff'; ctx.lineWidth = 4; ctx.stroke(); ctx.clip(); 
+        Game.ultVisualSlashes.forEach(s => {
+            const p = s.life / s.maxLife; ctx.beginPath(); ctx.moveTo(s.x1, s.y1); ctx.lineTo(s.x2, s.y2);
+            ctx.strokeStyle = `rgba(255, 255, 255, ${p})`; ctx.lineWidth = 4 + p * 6; ctx.lineCap = 'round'; ctx.stroke();
+            ctx.strokeStyle = `rgba(0, 243, 255, ${p * 0.5})`; ctx.lineWidth = 12; ctx.stroke();
+        });
+        ctx.restore();
+    }
+
+    Game.fireTrails.forEach(fire => {
+        if (fire.path.length < 2) return;
+        const alpha = Math.max(0, fire.life / fire.maxLife);
+        ctx.strokeStyle = `rgba(255, 100, 0, ${alpha * 0.6})`; ctx.lineWidth = 20; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.beginPath(); ctx.moveTo(fire.path[0].x, fire.path[0].y);
+        for (let i = 1; i < fire.path.length; i++) ctx.lineTo(fire.path[i].x, fire.path[i].y);
+        ctx.stroke();
+    });
+
+    Game.explosions.forEach(exp => {
+        const p = exp.life / exp.maxLife;
+        ctx.fillStyle = exp.color; ctx.globalAlpha = p * 0.3;
+        ctx.beginPath(); ctx.arc(exp.x, exp.y, exp.radius, 0, Math.PI*2); ctx.fill();
+        ctx.globalAlpha = p; ctx.strokeStyle = exp.color; ctx.lineWidth = 2; ctx.stroke();
+        ctx.globalAlpha = 1.0;
+    });
+
+    Game.projectiles.forEach(p => {
+        ctx.fillStyle = '#ffffff'; ctx.shadowColor = p.color; ctx.shadowBlur = 10;
+        ctx.beginPath(); 
+        if (p.isArrow) {
+            let angle = Math.atan2(p.vy, p.vx);
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate(angle);
+            ctx.moveTo(10, 0); ctx.lineTo(-10, -4); ctx.lineTo(-10, 4);
+            ctx.closePath();
+            ctx.fill(); ctx.strokeStyle = p.color; ctx.lineWidth = 2; ctx.stroke();
+            ctx.restore();
+        } else {
+            ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = p.color; ctx.lineWidth = 2; ctx.stroke(); 
+        }
+        ctx.shadowBlur = 0;
+    });
+    
+    Game.lightnings.forEach(l => {
+        ctx.strokeStyle = `rgba(204, 0, 255, ${l.life / 0.2})`; ctx.lineWidth = 3; ctx.shadowColor = '#cc00ff'; ctx.shadowBlur = 10;
+        ctx.beginPath();
+        if (l.path) {
+            ctx.moveTo(l.path[0].x, l.path[0].y);
+            for(let i=1; i<l.path.length; i++) ctx.lineTo(l.path[i].x + (Math.random()-0.5)*10, l.path[i].y + (Math.random()-0.5)*10);
+        } else {
+            ctx.moveTo(l.x1, l.y1); ctx.lineTo((l.x1 + l.x2) / 2 + (Math.random() - 0.5) * 40, (l.y1 + l.y2) / 2 + (Math.random() - 0.5) * 40); ctx.lineTo(l.x2, l.y2);
+        }
+        ctx.stroke(); ctx.shadowBlur = 0;
+    });
+
+    Game.enemies.forEach(e => {
+        ctx.fillStyle = e.color; ctx.shadowColor = e.color; ctx.shadowBlur = 15;
+        if (Game.ultState === 1 && Math.hypot(e.x - width/2, e.y - height/2) < Game.ultRadius) { ctx.fillStyle = '#ffffff'; ctx.shadowColor = '#00f3ff'; } 
+        else if (e.onFire > 0) { ctx.shadowColor = '#ff3300'; ctx.shadowBlur = 25; } 
+        else if (e.freezeTimer > 0) { ctx.fillStyle = '#66ffff'; ctx.shadowColor = '#00ffff'; ctx.shadowBlur = 15; }
+
+        ctx.beginPath();
+        
+        if (e.type === 'SPIKE') {
+            ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            if (Game.globalSpikeState === 'WARNING') {
+                if (Math.floor(Game.timePassed * 20) % 2 === 0) { ctx.fillStyle = '#ffffff'; ctx.fill(); }
+                ctx.beginPath();
+                ctx.arc(e.x, e.y, e.radius + 8 * (0.5 - Game.globalSpikeTimer)*2, 0, Math.PI * 2);
+                ctx.strokeStyle = '#ff003c'; ctx.lineWidth = 2; ctx.stroke();
+            }
+            
+            if (Game.globalSpikeState === 'ACTIVE') {
+                ctx.fillStyle = '#ff003c';
+                for (let i = 0; i < 8; i++) { 
+                    const a = (Math.PI / 4) * i + (Game.timePassed*3); 
+                    ctx.beginPath(); 
+                    ctx.moveTo(e.x + Math.cos(a) * e.radius * 0.8, e.y + Math.sin(a) * e.radius * 0.8); 
+                    ctx.lineTo(e.x + Math.cos(a - 0.2) * (e.radius + 12), e.y + Math.sin(a - 0.2) * (e.radius + 12)); 
+                    ctx.lineTo(e.x + Math.cos(a + 0.2) * (e.radius + 12), e.y + Math.sin(a + 0.2) * (e.radius + 12)); 
+                    ctx.fill(); 
+                }
+            }
+        }
+        else if (e.type === 'DASH') { ctx.moveTo(e.x, e.y + e.radius * 1.5); ctx.lineTo(e.x - e.radius * 0.8, e.y - e.radius); ctx.lineTo(e.x + e.radius * 0.8, e.y - e.radius); } 
+        else if (e.type === 'EVADE') { ctx.moveTo(e.x, e.y + e.radius); ctx.lineTo(e.x - e.radius, e.y); ctx.lineTo(e.x, e.y - e.radius); ctx.lineTo(e.x + e.radius, e.y); } 
+        else if (e.type === 'BOSS') {
+            ctx.fillStyle = '#b30000'; ctx.beginPath();
+            for (let i = 0; i < 8; i++) { const a = (Math.PI / 4) * i + (Game.ultState===1?0:-Game.timePassed * 1); if (i === 0) ctx.moveTo(e.x + Math.cos(a) * e.radius, e.y + Math.sin(a) * e.radius); else ctx.lineTo(e.x + Math.cos(a) * e.radius, e.y + Math.sin(a) * e.radius); }
+            ctx.closePath(); ctx.fill(); ctx.strokeStyle = '#ff003c'; ctx.lineWidth = 3; ctx.stroke();
+            ctx.fillStyle = '#111'; ctx.beginPath();
+            for (let i = 0; i < 4; i++) { const a = (Math.PI / 2) * i + (Game.ultState===1?0:Game.timePassed*2); if (i === 0) ctx.moveTo(e.x + Math.cos(a) * (e.radius * 0.6), e.y + Math.sin(a) * (e.radius * 0.6)); else ctx.lineTo(e.x + Math.cos(a) * (e.radius * 0.6), e.y + Math.sin(a) * (e.radius * 0.6)); }
+            ctx.closePath(); ctx.fill(); ctx.strokeStyle = '#ffcc00'; ctx.lineWidth = 2; ctx.stroke();
+            const pulse = Game.ultState === 1 ? 1 : (1 + Math.sin(Game.timePassed * 10) * 0.2);
+            ctx.fillStyle = '#ffcc00'; ctx.beginPath(); ctx.arc(e.x, e.y, e.radius * 0.2 * pulse, 0, Math.PI * 2); ctx.fill();
+        } 
+        else if (e.type === 'ARCHER') {
+            if (e.attackTimer <= 1.0 && e.attackTimer > 0) {
+                ctx.beginPath(); ctx.arc(e.x, e.y, e.radius * (1 + e.attackTimer * 1.5), 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(0, 255, 170, ${1 - e.attackTimer})`; ctx.lineWidth = 1; ctx.stroke();
+            }
+            const aBase = Game.ultState===1?0:Game.timePassed*1.5;
+            ctx.moveTo(e.x + Math.cos(aBase) * e.radius * 1.2, e.y + Math.sin(aBase) * e.radius * 1.2);
+            ctx.lineTo(e.x + Math.cos(aBase + 2.5) * e.radius, e.y + Math.sin(aBase + 2.5) * e.radius);
+            ctx.lineTo(e.x + Math.cos(aBase - 2.5) * e.radius, e.y + Math.sin(aBase - 2.5) * e.radius);
+        }
+        else { 
+            for (let i = 0; i < 6; i++) { const a = (Math.PI / 3) * i + (Game.ultState===1?0:Game.timePassed*2); if (i === 0) ctx.moveTo(e.x + Math.cos(a) * e.radius, e.y + Math.sin(a) * e.radius); else ctx.lineTo(e.x + Math.cos(a) * e.radius, e.y + Math.sin(a) * e.radius); }
+        }
+        if (e.type !== 'BOSS' && e.type !== 'SPIKE') { ctx.closePath(); ctx.fill(); }
+
+        if (e.type === 'SHIELD' && e.hasShield) { ctx.strokeStyle = '#00f3ff'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(e.x, e.y, e.radius + 6, 0, Math.PI * 2); ctx.stroke(); }
+        if (e.type === 'BLINK') { ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(e.x, e.y, e.radius * 0.4, 0, Math.PI * 2); ctx.fill(); }
+
+        if (e.hp < e.maxHp && e.hp > 0) {
+            const hpRatio = e.hp / e.maxHp; ctx.shadowBlur = 0; 
+            ctx.beginPath(); ctx.arc(e.x, e.y, e.radius + 6, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)'; ctx.lineWidth = e.type === 'BOSS' ? 4 : 2; ctx.stroke();
+            ctx.beginPath(); ctx.arc(e.x, e.y, e.radius + 6, -Math.PI / 2, -Math.PI / 2 + hpRatio * Math.PI * 2); ctx.strokeStyle = hpRatio > 0.5 ? '#00ffaa' : '#ff003c'; ctx.lineWidth = e.type === 'BOSS' ? 4.5 : 2.5; ctx.lineCap = 'round'; ctx.stroke();
+        }
+        
+        if (e.hitByElements && e.hitByElements.size > 0) {
+            let idx = 0; const startX = e.x - (e.hitByElements.size * 5) + 5; 
+            e.hitByElements.forEach(el => { ctx.fillStyle = el === 1 ? '#ff3300' : (el === 2 ? '#00ffff' : '#cc00ff'); ctx.beginPath(); ctx.arc(startX + idx * 10, e.y - e.radius - 15, 3.5, 0, Math.PI * 2); ctx.fill(); idx++; });
+        }
+        ctx.shadowBlur = 0;
+    });
+
+    let playerColor = '#ffffff';
+    let hpRatio = Player.hp / Player.maxHp;
+    if (hpRatio <= 0.3) {
+        playerColor = (Math.floor(Game.timePassed * 10) % 2 === 0) ? '#ff003c' : '#880000';
+    } else if (hpRatio <= 0.6) {
+        playerColor = '#facc15';
+    }
+
+    if (Player.currentCooldown > 0) {
+        ctx.fillStyle = '#1e3a8a'; ctx.shadowBlur = 0;
+        ctx.beginPath(); ctx.arc(Player.x, Player.y, Player.radius + 12, -Math.PI/2, -Math.PI/2 + (1 - Player.currentCooldown / Player.baseCooldown) * Math.PI * 2);
+        ctx.strokeStyle = '#ff003c'; ctx.lineWidth = 3; ctx.stroke();
+    } else {
+        ctx.fillStyle = '#00f3ff'; ctx.shadowBlur = 25; ctx.shadowColor = '#00f3ff';
+        ctx.beginPath(); ctx.arc(Player.x, Player.y, Player.radius + 12, 0, Math.PI * 2); ctx.strokeStyle = 'rgba(0, 243, 255, 0.4)'; ctx.lineWidth = 2; ctx.stroke();
+    }
+    
+    if (Player.godMode) { ctx.strokeStyle = '#facc15'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(Player.x, Player.y, Player.radius + 16, 0, Math.PI * 2); ctx.stroke(); }
+    if (Player.bloodthirstStacks > 0) { ctx.strokeStyle = `rgba(255, 0, 0, ${Player.bloodthirstTimer / 2.0})`; ctx.lineWidth = 2 + Player.bloodthirstStacks; ctx.beginPath(); ctx.arc(Player.x, Player.y, Player.radius + 20, 0, Math.PI * 2); ctx.stroke(); }
+
+    let renderX = Player.x;
+    let renderY = Player.y;
+    if (Player.ultCharge >= Player.maxUltCharge && Game.ultState === 0) {
+        renderX += (Math.random() - 0.5) * 4;
+        renderY += (Math.random() - 0.5) * 4;
+        
+        ctx.save();
+        ctx.translate(renderX, renderY);
+        ctx.rotate(Game.timePassed * 5); 
+        ctx.beginPath();
+        ctx.arc(0, 0, Player.radius + 18, 0, Math.PI * 0.8);
+        ctx.strokeStyle = '#facc15'; 
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.arc(0, 0, Player.radius + 18, Math.PI * 1.0, Math.PI * 1.8);
+        ctx.strokeStyle = '#00f3ff'; 
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    ctx.beginPath(); 
+    ctx.moveTo(renderX, renderY - Player.radius); 
+    ctx.lineTo(renderX + Player.radius * 0.8, renderY + Player.radius * 0.8); 
+    ctx.lineTo(renderX, renderY + Player.radius * 0.4); 
+    ctx.lineTo(renderX - Player.radius * 0.8, renderY + Player.radius * 0.8); 
+    ctx.closePath(); 
+    ctx.fillStyle = playerColor; 
+    ctx.fill();
+    
+    ctx.fillStyle = Player.currentCooldown > 0 ? '#ff003c' : '#050510'; 
+    ctx.beginPath(); ctx.arc(renderX, renderY + 2, Player.radius * 0.35, 0, Math.PI * 2); ctx.fill(); 
+    ctx.shadowBlur = 0;
+
+    Game.slashes.forEach(s => {
+        if (s.path.length < 2) return;
+        const progress = s.life / s.maxLife; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        
+        let strokeColor = s.isCrit ? `rgba(255, 50, 50, ${progress})` : `rgba(100, 200, 255, ${progress})`;
+        if (s.isIsshin) { strokeColor = `rgba(255, 0, 0, ${progress})`; ctx.shadowColor = '#ff0000'; ctx.shadowBlur = 20; ctx.lineWidth = 2; }
+        else {
+            if (s.element === 1) strokeColor = `rgba(255, 50, 0, ${progress})`; 
+            else if (s.element === 2) strokeColor = `rgba(0, 255, 255, ${progress})`; 
+            else if (s.element === 3) strokeColor = `rgba(204, 0, 255, ${progress})`; 
+            ctx.lineWidth = s.thickness + 5;
+        }
+        
+        ctx.strokeStyle = strokeColor;
+        ctx.beginPath(); ctx.moveTo(s.path[0].x, s.path[0].y); for (let i = 1; i < s.path.length; i++) ctx.lineTo(s.path[i].x, s.path[i].y); ctx.stroke();
+        if (!s.isIsshin) { ctx.strokeStyle = `rgba(255, 255, 255, ${progress + 0.5})`; ctx.lineWidth = s.thickness * 0.4; ctx.stroke(); }
+        ctx.shadowBlur = 0;
+    });
+
+    if (isSwiping && currentSwipePath.length > 0) {
+        ctx.strokeStyle = Player.currentCooldown > 0 ? 'rgba(239, 68, 68, 0.4)' : 'rgba(255, 255, 255, 0.5)'; 
+        ctx.lineWidth = 2; ctx.setLineDash([5, 5]); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(currentSwipePath[0].x, currentSwipePath[0].y); for (let i = 1; i < currentSwipePath.length; i++) ctx.lineTo(currentSwipePath[i].x, currentSwipePath[i].y); ctx.stroke(); ctx.setLineDash([]);
+    }
+
+    // --- 教程系统的聚光灯挖孔渲染层 ---
+    if (Tutorial.activeType && Tutorial.spotlightTarget) {
+        const target = Tutorial.spotlightTarget();
+        if (target) {
+            ctx.save();
+            
+            // 修复点：彻底放弃使用 destination-out 擦除像素
+            // 改用“非零环绕规则”，顺时针画全屏矩形，逆时针画圆，自动形成完美的遮罩镂空，不破坏游戏本体画面
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; 
+            ctx.beginPath();
+            ctx.rect(0, 0, width, height); // 顺时针绘制外框
+            ctx.arc(target.x, target.y, target.r, 0, Math.PI * 2, true); // 逆时针绘制内孔 (注意参数 true)
+            ctx.fill();
+            
+            // 画一个发光描边
+            ctx.beginPath();
+            ctx.arc(target.x, target.y, target.r, 0, Math.PI * 2);
+            ctx.strokeStyle = '#00f3ff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // 画一个跳动的指示箭头
+            const arrowY = target.y - target.r - 20 + Math.sin(Game.timePassed * 15) * 10;
+            ctx.fillStyle = '#ff003c';
+            ctx.beginPath();
+            ctx.moveTo(target.x, arrowY + 10);
+            ctx.lineTo(target.x - 10, arrowY - 10);
+            ctx.lineTo(target.x - 4, arrowY - 10);
+            ctx.lineTo(target.x - 4, arrowY - 25);
+            ctx.lineTo(target.x + 4, arrowY - 25);
+            ctx.lineTo(target.x + 4, arrowY - 10);
+            ctx.lineTo(target.x + 10, arrowY - 10);
+            ctx.closePath();
+            ctx.fill();
+            
+            ctx.restore();
+        }
+    }
+
+    Game.particles.forEach(p => { ctx.fillStyle = p.color; ctx.globalAlpha = p.life * 2; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill(); }); ctx.globalAlpha = 1.0;
+    Game.expGems.forEach(g => { ctx.fillStyle = '#00ffaa'; ctx.shadowColor = '#00ffaa'; ctx.shadowBlur = 10; ctx.fillRect(g.x - 3, g.y - 3, 6, 6); ctx.shadowBlur = 0; });
+    
+    if (Config.fxTextEnabled) {
+        Game.floatingTexts.forEach(t => { ctx.fillStyle = t.color; ctx.font = `bold ${t.size}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText(t.text, t.x, t.y); });
+    }
+    
+    if (Game.comboDisplay.life > 0) {
+        const alpha = Math.min(1, Game.comboDisplay.life * 2); ctx.save(); ctx.fillStyle = `rgba(255, 215, 0, ${alpha})`; ctx.shadowColor = '#d97706'; ctx.shadowBlur = 10; ctx.textAlign = 'center';
+        const scale = 1.0 + (Game.comboDisplay.life * 0.2); ctx.translate(width / 2, 80); ctx.scale(scale, scale);
+        ctx.font = 'italic 900 32px sans-serif'; ctx.fillText(`【 x${Game.comboDisplay.count} 击杀 】`, 0, 0);
+        ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`; ctx.shadowBlur = 0; ctx.fillText(`+${Math.floor((Game.comboDisplay.count - 1) * 10)}% 积分奖励!`, 0, 25);
+        ctx.restore();
+    }
+    ctx.restore();
+}
+
+// ==========================================
+// 9. 游戏主循环与辅助函数
+// ==========================================
+function gameLoop(timestamp) {
+    if (!lastTime) lastTime = timestamp; 
+    const realDt = Math.min((timestamp - lastTime) / 1000, 0.1); 
+    lastTime = timestamp;
+    
+    AudioSys.updateBGM(); 
+    
+    update(realDt); 
+    draw(); 
+    requestAnimationFrame(gameLoop);
+}
+
+function updateUI() {
+    document.getElementById('ui-level').innerText = Game.level;
+    document.getElementById('ui-exp-bar').style.height = `${Math.min(100, (Game.exp/Game.expNeeded)*100)}%`;
+    document.getElementById('ui-hp-bar').style.height = `${Math.max(0, (Player.hp/Player.maxHp)*100)}%`;
+    const ultBtn = document.getElementById('ui-ult-btn'); const ultRing = document.getElementById('ui-ult-ring');
+    const ultRatio = Math.min(1, Player.ultCharge / Player.maxUltCharge);
+    ultRing.style.strokeDashoffset = 175.9 - (ultRatio * 175.9);
+    if (ultRatio >= 1) { ultBtn.classList.remove('opacity-50', 'cursor-not-allowed'); ultBtn.classList.add('cursor-pointer', 'shadow-[0_0_20px_#00f3ff]'); ultRing.setAttribute('stroke', '#facc15'); ultBtn.querySelector('span').classList.add('animate-pulse', 'text-yellow-400'); } 
+    else { ultBtn.classList.add('opacity-50', 'cursor-not-allowed'); ultBtn.classList.remove('cursor-pointer', 'shadow-[0_0_20px_#00f3ff]'); ultRing.setAttribute('stroke', '#00f3ff'); ultBtn.querySelector('span').classList.remove('animate-pulse', 'text-yellow-400'); }
+}
+
+function addExp(amount) {
+    Game.exp += amount;
+    if (Game.exp >= Game.expNeeded) {
+        Game.exp -= Game.expNeeded; Game.level++; Game.expNeeded = Math.floor(Game.expNeeded * 1.5); triggerLevelUp();
+        if (Game.level === Game.nextBossLevel) { Game.bossActive = true; Game.nextBossLevel += 3; spawnBoss(); }
+    }
+    updateUI();
+}
+
+function triggerLevelUp() {
+    gameState = 'LEVELUP'; AudioSys.playLevelUp(); let hasRerolled = false; 
+    triggerVibrate([50, 50, 100]); 
+    
+    if (!Tutorial.progress['upgrade']) {
+        Tutorial.trigger('upgrade', '机体进化', '吸收足够的经验模组，可进行系统演化。\n根据不同的战斗流派选择你的升级！');
+        Tutorial.resolveAuto('upgrade', 4000);
+    }
+    
+    const renderOptions = () => {
+        const container = document.getElementById('upgrade-container'); container.innerHTML = '';
+        let available = Upgrades.filter(u => u.req()); available.sort(() => 0.5 - Math.random());
+        available.slice(0, 3).forEach(choice => {
+            const btn = document.createElement('button');
+            btn.className = 'w-full p-4 bg-gray-800 border-2 border-gray-600 rounded-xl text-left text-white transform transition-all duration-300 opacity-50 pointer-events-none flex flex-col justify-center';
+            let titleColor = "text-cyan-400";
+            if(choice.name.includes("极寒") || choice.name.includes("超导") || choice.name.includes("等离子") || choice.name.includes("引爆")) titleColor = "text-purple-400";
+            if(choice.name.includes("处决") || choice.name.includes("嗜血") || choice.name.includes("一闪") || choice.name.includes("无锋")) titleColor = "text-orange-400";
+            if(choice.name.includes("无限") || choice.name.includes("弹反") || choice.name.includes("回响") || choice.name.includes("壁垒")) titleColor = "text-teal-300";
+            if(choice.name.includes("觉醒")) titleColor = "text-yellow-400 font-black animate-pulse";
+            btn.innerHTML = `<div class="font-bold group-hover:text-white ${titleColor} mb-1">${choice.name}</div><div class="text-xs text-gray-400">${choice.desc}</div>`;
+            container.appendChild(btn);
+
+            setTimeout(() => {
+                btn.classList.remove('opacity-50', 'pointer-events-none');
+                btn.classList.add('hover:scale-105', 'active:scale-95', 'group', 'hover:border-cyan-400');
+                btn.onclick = () => { 
+                    triggerVibrate(30); 
+                    Player.acquiredUpgrades[choice.name] = (Player.acquiredUpgrades[choice.name] || 0) + 1; recalculateStats(); updateUI(); document.getElementById('level-up-screen').classList.add('hidden'); document.getElementById('level-up-screen').classList.remove('flex'); gameState = 'PLAYING'; 
+                };
+            }, 600);
+        });
+        
+        const rerollBtn = document.getElementById('btn-reroll');
+        rerollBtn.classList.add('opacity-50', 'pointer-events-none'); 
+        
+        if (hasRerolled) { 
+            rerollBtn.classList.remove('cursor-not-allowed'); 
+            rerollBtn.classList.add('cursor-not-allowed');
+            rerollBtn.innerText = '🎲 刷新选项 (0/1)'; 
+            rerollBtn.onclick = null; 
+        } 
+        else { 
+            rerollBtn.classList.remove('cursor-not-allowed');
+            rerollBtn.innerText = '🎲 刷新选项 (1/1)'; 
+            setTimeout(() => {
+                rerollBtn.classList.remove('opacity-50', 'pointer-events-none');
+                rerollBtn.onclick = () => { 
+                    triggerVibrate(30); 
+                    hasRerolled = true; renderOptions(); 
+                }; 
+            }, 600);
+        }
+    };
+    renderOptions(); document.getElementById('level-up-screen').classList.remove('hidden'); document.getElementById('level-up-screen').classList.add('flex');
+}
+
+function pointToSegmentDistSq(px, py, x1, y1, x2, y2) {
+    let l2 = (x2-x1)**2 + (y2-y1)**2; if (l2 === 0) return (px-x1)**2 + (py-y1)**2;
+    let t = Math.max(0, Math.min(1, ((px-x1)*(x2-x1) + (py-y1)*(y2-y1))/l2)); return (px-(x1+t*(x2-x1)))**2 + (py-(y1+t*(y2-y1)))**2;
+}
+
+function createParticles(x, y, c, n) { for(let i=0; i<n; i++) { const a = Math.random()*Math.PI*2, s = Math.random()*200+50; Game.particles.push({x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s, life: 0.3, color: c, size: Math.random()*3+2}); } }
+
+function gameOver() { 
+    gameState = 'GAMEOVER'; document.getElementById('game-over-screen').classList.remove('hidden'); document.getElementById('game-over-screen').classList.add('flex'); document.getElementById('final-score').innerText = Game.score; 
+    document.getElementById('submit-score-container').classList.remove('hidden'); document.getElementById('player-name').value = ''; renderLeaderboard();
+    AudioSys.stopBGM(); 
+    triggerVibrate([200, 100, 300]); 
+}
+
+function resetGame() { 
+    Player.hp = 100; Player.acquiredUpgrades = {}; Player.godMode = false; recalculateStats(); 
+    Game.score = 0; Game.level = 1; Game.exp = 0; Game.expNeeded = 10; Game.spawnRate = 1.0; Game.currentSlashKills = 0; Game.timeSinceLastSlash = 0; Game.comboDisplay = { count: 0, life: 0 }; Game.ultState = 0; Player.ultCharge = 0;
+    
+    Game.globalSpikeTimer = 2.0; Game.globalSpikeState = 'COOLDOWN';
+    Game.timeScale = 1.0; 
+    
+    Game.bossActive = false; Game.nextBossLevel = 3; Game.cataclysmIndex = 1;
+    Game.enemies = []; Game.slashes = []; Game.fireTrails = []; Game.ultVisualSlashes = []; Game.projectiles = []; Game.lightnings = []; Game.explosions = [];
+    updateUI(); document.getElementById('start-screen').classList.add('hidden'); document.getElementById('game-over-screen').classList.remove('flex'); document.getElementById('game-over-screen').classList.add('hidden'); 
+    lastTime = performance.now(); gameState = 'PLAYING'; 
+    
+    if (Config.bgmEnabled) AudioSys.startBGM(); 
+}
+
+requestAnimationFrame(gameLoop);
+
+</script>
+</body>
+</html>
